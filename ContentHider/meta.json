@@ -1,14 +1,14 @@
 {
   "category": "General",
-  "changelog": "Release v0.1.1 of Jellyfin Content Hider.",
+  "changelog": "Release v0.2.0 of Jellyfin Content Hider.",
   "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients ",
   "guid": "3867d4a9-959b-476d-b1a6-a912a4741924",
   "name": "Content Hider",
   "overview": "Per-user movie, TV show, and collection hiding across all clients.",
   "owner": "dlinning",
   "targetAbi": "12.0.0.0",
-  "timestamp": "2026-11-01T05:32:46Z",
-  "version": "0.1.1.0",
+  "timestamp": "2026-11-01T06:13:02Z",
+  "version": "0.2.0.0",
   "status": "Active",
   "autoUpdate": false,
   "assemblies": [
