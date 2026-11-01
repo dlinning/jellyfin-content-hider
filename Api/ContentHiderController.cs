@@ -22,6 +22,7 @@ namespace Jellyfin.Plugin.ContentHider.Api;
 /// Serves the self-service Content Hider user web portal, client script, and user-scoped REST API endpoints.
 /// </summary>
 [ApiController]
+[Authorize(AuthenticationSchemes = "CustomAuthentication,CustomHeaderAuthentication")]
 [Route("ContentHider")]
 public sealed class ContentHiderController : ControllerBase
 {
@@ -77,7 +78,6 @@ public sealed class ContentHiderController : ControllerBase
     /// </summary>
     /// <returns>The JavaScript file.</returns>
     [HttpGet("ClientScript.js")]
-    [AllowAnonymous]
     [Produces("application/javascript")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult GetClientScript()
@@ -90,7 +90,6 @@ public sealed class ContentHiderController : ControllerBase
     /// </summary>
     /// <returns>The user's blocking status.</returns>
     [HttpGet("Api/Status")]
-    [Authorize]
     [ProducesResponseType(typeof(UserBlockingStatusDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public ActionResult<UserBlockingStatusDto> GetStatus()
@@ -110,7 +109,6 @@ public sealed class ContentHiderController : ControllerBase
     /// <param name="request">The toggle request payload.</param>
     /// <returns>The updated user blocking status.</returns>
     [HttpPost("Api/Toggle")]
-    [Authorize]
     [ProducesResponseType(typeof(UserBlockingStatusDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public ActionResult<UserBlockingStatusDto> ToggleBlocking([FromBody] ToggleBlockingRequest request)
@@ -133,7 +131,6 @@ public sealed class ContentHiderController : ControllerBase
     /// </summary>
     /// <returns>The list of blocked items.</returns>
     [HttpGet("Api/Blocks")]
-    [Authorize]
     [ProducesResponseType(typeof(IReadOnlyList<ContentHiderItemDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public ActionResult<IReadOnlyList<ContentHiderItemDto>> GetBlocks()
@@ -176,7 +173,6 @@ public sealed class ContentHiderController : ControllerBase
     /// <param name="exact">If <c>true</c>, blocks the exact item without normalizing episodes/seasons to their parent series.</param>
     /// <returns>The created block DTO.</returns>
     [HttpPost("Api/Blocks/{mediaId}")]
-    [Authorize]
     [ProducesResponseType(typeof(ContentHiderItemDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public ActionResult<ContentHiderItemDto> AddBlock([FromRoute] Guid mediaId, [FromQuery] bool exact = false)
@@ -205,7 +201,6 @@ public sealed class ContentHiderController : ControllerBase
     /// <param name="mediaId">The media item identifier to unhide.</param>
     /// <returns>204 No Content.</returns>
     [HttpDelete("Api/Blocks/{mediaId}")]
-    [Authorize]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public ActionResult RemoveBlock([FromRoute] Guid mediaId)
@@ -228,7 +223,6 @@ public sealed class ContentHiderController : ControllerBase
     /// <param name="limit">Maximum number of items to return (default 40).</param>
     /// <returns>List of matching items annotated with block status.</returns>
     [HttpGet("Api/Search")]
-    [Authorize]
     [ProducesResponseType(typeof(IReadOnlyList<ContentHiderItemDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public ActionResult<IReadOnlyList<ContentHiderItemDto>> SearchLibrary(
@@ -278,7 +272,6 @@ public sealed class ContentHiderController : ControllerBase
     /// </summary>
     /// <returns>Storage info DTO.</returns>
     [HttpGet("Api/AdminInfo")]
-    [Authorize]
     [ProducesResponseType(typeof(AdminDatabaseInfoDto), StatusCodes.Status200OK)]
     public ActionResult<AdminDatabaseInfoDto> GetAdminInfo()
     {

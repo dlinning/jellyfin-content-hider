@@ -6,22 +6,35 @@
     }
     window.__contentHiderInitialized = true;
 
+    /**
+     * Makes an API call to the Jellyfin instance, authorizing
+     * the current User
+     *
+     * @param {string} path
+     * @param {RequestInit} options
+     * @return {object|null} 
+     */
     function api(path, options) {
         if (!window.ApiClient || typeof window.ApiClient.getUrl !== 'function') {
             return Promise.reject(new Error('ApiClient unavailable'));
         }
+        
         const url = window.ApiClient.getUrl(path);
         const token = window.ApiClient.accessToken && window.ApiClient.accessToken();
+        
         const headers = Object.assign(
             { 'Content-Type': 'application/json' },
-            token ? { 'X-Emby-Token': token } : {},
+            // Use the native MediaBrowser schema header instead of X-Emby-Token
+            token ? { 'Authorization': `MediaBrowser Token="${token}"` } : {},
             (options && options.headers) || {}
         );
+        
         return fetch(url, Object.assign({}, options, { headers })).then(function (res) {
             if (res.status === 204) return null;
             return res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status));
         });
     }
+
 
     function updateHeaderButton(btn, status) {
         const active = status && (status.IsEffectivelyBlocking ?? status.isEffectivelyBlocking);
