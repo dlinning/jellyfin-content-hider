@@ -84,10 +84,9 @@ mkdir -p "$DIST_DIR"
 
 dotnet publish "$ROOT_DIR/Jellyfin.Plugin.ContentHider.csproj" -c Release -o "$DIST_DIR/publish"
 
-cp "$DIST_DIR/publish/Jellyfin.Plugin.ContentHider.dll" "$DIST_DIR/"
-if [[ -f "$DIST_DIR/publish/Jellyfin.Plugin.ContentHider.pdb" ]]; then
-    cp "$DIST_DIR/publish/Jellyfin.Plugin.ContentHider.pdb" "$DIST_DIR/"
-fi
+cp -R "$DIST_DIR/publish/"* "$DIST_DIR/"
+# Ensure host-provided Jellyfin and MediaBrowser assemblies are not bundled
+rm -f "$DIST_DIR"/Jellyfin.Controller.dll "$DIST_DIR"/Jellyfin.Model.dll "$DIST_DIR"/MediaBrowser.*.dll
 rm -rf "$DIST_DIR/publish"
 
 TIMESTAMP_ISO="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
