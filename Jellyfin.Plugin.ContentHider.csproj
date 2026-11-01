@@ -3,31 +3,39 @@
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <RootNamespace>Jellyfin.Plugin.ContentHider</RootNamespace>
+        <EnableDynamicLoading>true</EnableDynamicLoading>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <Nullable>enable</Nullable>
         <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+        <DefaultItemExcludes>$(DefaultItemExcludes);tests\**;dist\**</DefaultItemExcludes>
     </PropertyGroup>
 
     <ItemGroup>
+        <FrameworkReference Include="Microsoft.AspNetCore.App" />
         <PackageReference Include="Jellyfin.Controller" Version="12.4.0">
             <ExcludeAssets>runtime</ExcludeAssets>
         </PackageReference>
         <PackageReference Include="Jellyfin.Model" Version="12.4.0">
             <ExcludeAssets>runtime</ExcludeAssets>
         </PackageReference>
+        <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0">
+            <ExcludeAssets>runtime</ExcludeAssets>
+        </PackageReference>
     </ItemGroup>
 
     <ItemGroup>
         <PackageReference Include="SerilogAnalyzer" Version="0.15.0" PrivateAssets="All" />
-        <PackageReference Include="StyleCop.Analyzers" Version="1.2.0-beta.556" PrivateAssets="All" />
-        <PackageReference Include="SmartAnalyzers.MultithreadingAnalyzer" Version="1.1.31"
-            PrivateAssets="All" />
+        <PackageReference Include="SmartAnalyzers.MultithreadingAnalyzer" Version="1.1.31" PrivateAssets="All" />
     </ItemGroup>
 
     <ItemGroup>
         <None Remove="Configuration\configPage.html" />
         <EmbeddedResource Include="Configuration\configPage.html" />
+        <None Remove="Web\portal.html" />
+        <EmbeddedResource Include="Web\portal.html" />
+        <None Remove="Web\clientScript.js" />
+        <EmbeddedResource Include="Web\clientScript.js" />
     </ItemGroup>
 
 </Project>

@@ -331,7 +331,7 @@ public sealed class SqliteContentBlockRepository : IContentBlockRepository
         }
     }
 
-    private static string FormatGuid(Guid id) => id.ToString("D", CultureInfo.InvariantCulture).ToLowerInvariant();
+    private static string FormatGuid(Guid id) => id.ToString("D", CultureInfo.InvariantCulture).ToUpperInvariant();
 
     private static string FormatUtc(DateTime utc) => utc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
 

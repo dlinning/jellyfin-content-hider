@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jellyfin Content Hider</title>
+    <style>
+        :root {
+            --bg: #101014;
+            --card: #1b1b22;
+            --border: #2c2c36;
+            --accent: #00a4dc;
+            --danger: #e5484d;
+            --success: #30a46c;
+            --warning: #f5a623;
+            --text: #f2f2f7;
+            --muted: #9a9aa6;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.45;
+        }
+        header {
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 1.25rem;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .container {
+            max-width: 960px;
+            margin: 1.25rem auto;
+            padding: 0 1rem 3rem;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.15rem;
+            margin-bottom: 1.25rem;
+        }
+        .status-banner {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.65rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .badge-active { background: rgba(48,164,108,0.2); color: #5ce09b; border: 1px solid rgba(48,164,108,0.5); }
+        .badge-paused { background: rgba(245,166,35,0.2); color: #ffd166; border: 1px solid rgba(245,166,35,0.5); }
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        button {
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: #262631;
+            color: var(--text);
+            padding: 0.55rem 0.9rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: opacity 0.15s ease;
+        }
+        button:hover { opacity: 0.9; }
+        button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        button.danger { background: rgba(229,72,77,0.18); border-color: rgba(229,72,77,0.5); color: #ff8589; }
+        button.success { background: var(--success); border-color: var(--success); color: #fff; }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 0.65rem 0.85rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: #131318;
+            color: var(--text);
+            font-size: 0.95rem;
+        }
+        .search-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .item-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            gap: 0.85rem;
+        }
+        .item-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            background: #14141a;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem;
+        }
+        .item-meta {
+            min-width: 0;
+            flex: 1;
+        }
+        .item-title {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .item-sub {
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Jellyfin Content Hider</h1>
+        <div class="btn-group">
+            <a href="../web/index.html" style="color: var(--accent); text-decoration: none; font-size: 0.9rem;">&larr; Back to Jellyfin</a>
+            <button id="btnLogout" class="hidden">Switch User</button>
+        </div>
+    </header>
+
+    <div class="container">
+        <div id="loginCard" class="card hidden">
+            <h2 style="margin-top: 0;">Sign in with your Jellyfin account</h2>
+            <p style="color: var(--muted); font-size: 0.9rem;">Manage your hidden shows/movies and toggle blocking across Web, Mobile, and TV.</p>
+            <form id="loginForm">
+                <div style="margin-bottom: 0.75rem;">
+                    <input id="loginUser" type="text" placeholder="Username" required autocomplete="username" />
+                </div>
+                <div style="margin-bottom: 0.75rem;">
+                    <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password" />
+                </div>
+                <button type="submit" class="primary">Sign In</button>
+                <div id="loginError" style="color: #ff8589; margin-top: 0.65rem; font-size: 0.85rem;"></div>
+            </form>
+        </div>
+
+        <div id="mainApp" class="hidden">
+            <div class="card status-banner">
+                <div>
+                    <div style="display: flex; align-items: center; gap: 0.6rem;">
+                        <strong>Content Blocking:</strong>
+                        <span id="statusBadge" class="badge badge-active">Active</span>
+                    </div>
+                    <div id="statusSubtext" style="color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem;">
+                        Hidden shows and movies are suppressed across Web, Mobile, and TV.
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <button id="btnResumeNow" class="success hidden">Enable Blocking Now</button>
+                    <button id="btnPause1h">Pause for 1 Hour</button>
+                    <button id="btnPause3h">Pause for 3 Hours</button>
+                    <button id="btnPauseManual" class="danger">Turn Off Until Re-enabled</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3 style="margin-top: 0;">Currently Hidden (<span id="blockedCount">0</span>)</h3>
+                <div id="blockedList" class="item-grid"></div>
+                <div id="blockedEmpty" style="color: var(--muted); font-size: 0.9rem;">No movies, shows, or collections are currently hidden.</div>
+            </div>
+
+            <div class="card">
+                <h3 style="margin-top: 0;">Search Library to Hide / Unhide</h3>
+                <form id="searchForm" class="search-row">
+                    <input id="searchInput" type="text" placeholder="Search movies, TV shows, or collections..." />
+                    <button type="submit" class="primary">Search</button>
+                </form>
+                <div id="searchResults" class="item-grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const STORAGE_KEY = 'content_hider_token';
+            let authToken = null;
+
+            function discoverJellyfinToken() {
+                const saved = sessionStorage.getItem(STORAGE_KEY);
+                if (saved) return saved;
+                try {
+                    const raw = localStorage.getItem('jellyfin_credentials');
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (parsed && Array.isArray(parsed.Servers)) {
+                            for (const srv of parsed.Servers) {
+                                if (srv && srv.AccessToken) {
+                                    return srv.AccessToken;
+                                }
+                            }
+                        }
+                    }
+                } catch (_) {}
+                return null;
+            }
+
+            async function apiFetch(path, options) {
+                const headers = Object.assign({ 'Content-Type': 'application/json' }, (options && options.headers) || {});
+                if (authToken) {
+                    headers['X-Emby-Token'] = authToken;
+                }
+                const res = await fetch(path, Object.assign({}, options, { headers }));
+                if (res.status === 401) {
+                    showLogin();
+                    throw new Error('Unauthorized');
+                }
+                if (res.status === 204) return null;
+                return res.json();
+            }
+
+            function showLogin() {
+                document.getElementById('loginCard').classList.remove('hidden');
+                document.getElementById('mainApp').classList.add('hidden');
+                document.getElementById('btnLogout').classList.add('hidden');
+            }
+
+            function showApp() {
+                document.getElementById('loginCard').classList.add('hidden');
+                document.getElementById('mainApp').classList.remove('hidden');
+                document.getElementById('btnLogout').classList.remove('hidden');
+            }
+
+            async function refreshAll() {
+                const [status, blocks] = await Promise.all([
+                    apiFetch('ContentHider/Api/Status'),
+                    apiFetch('ContentHider/Api/Blocks')
+                ]);
+                showApp();
+                renderStatus(status);
+                renderBlocks(blocks || []);
+            }
+
+            function renderStatus(status) {
+                const badge = document.getElementById('statusBadge');
+                const sub = document.getElementById('statusSubtext');
+                const btnResume = document.getElementById('btnResumeNow');
+                document.getElementById('blockedCount').textContent = String(status.BlockedCount ?? status.blockedCount ?? 0);
+
+                const active = status.IsEffectivelyBlocking ?? status.isEffectivelyBlocking;
+                const disabledUntil = status.DisabledUntilUtc ?? status.disabledUntilUtc;
+
+                if (active) {
+                    badge.textContent = 'Active';
+                    badge.className = 'badge badge-active';
+                    sub.textContent = 'Hidden shows and movies are suppressed across Web, Mobile, and TV.';
+                    btnResume.classList.add('hidden');
+                } else {
+                    badge.textContent = 'Paused (Showing All Library Content)';
+                    badge.className = 'badge badge-paused';
+                    if (disabledUntil) {
+                        const dt = new Date(disabledUntil);
+                        sub.textContent = 'All library content is visible. Blocking automatically resumes at ' + dt.toLocaleTimeString() + '.';
+                    } else {
+                        sub.textContent = 'All library content is visible until you re-enable blocking.';
+                    }
+                    btnResume.classList.remove('hidden');
+                }
+            }
+
+            function createItemCard(item, onAction) {
+                const id = item.MediaId || item.mediaId;
+                const name = item.Name || item.name || id;
+                const type = item.Type || item.type || 'Item';
+                const year = item.ProductionYear || item.productionYear;
+                const isBlocked = Boolean(item.IsBlocked ?? item.isBlocked);
+
+                const card = document.createElement('div');
+                card.className = 'item-card';
+
+                const meta = document.createElement('div');
+                meta.className = 'item-meta';
+
+                const titleEl = document.createElement('div');
+                titleEl.className = 'item-title';
+                titleEl.textContent = name;
+
+                const subEl = document.createElement('div');
+                subEl.className = 'item-sub';
+                subEl.textContent = year ? (type + ' • ' + year) : type;
+
+                meta.appendChild(titleEl);
+                meta.appendChild(subEl);
+
+                const btn = document.createElement('button');
+                btn.textContent = isBlocked ? 'Unhide' : 'Hide';
+                btn.className = isBlocked ? 'danger' : 'primary';
+                btn.addEventListener('click', () => onAction(id, isBlocked));
+
+                card.appendChild(meta);
+                card.appendChild(btn);
+                return card;
+            }
+
+            function renderBlocks(blocks) {
+                const container = document.getElementById('blockedList');
+                const empty = document.getElementById('blockedEmpty');
+                container.innerHTML = '';
+                if (!blocks.length) {
+                    empty.classList.remove('hidden');
+                    return;
+                }
+                empty.classList.add('hidden');
+                for (const b of blocks) {
+                    container.appendChild(createItemCard(b, async (id) => {
+                        await apiFetch('ContentHider/Api/Blocks/' + encodeURIComponent(id), { method: 'DELETE' });
+                        await refreshAll();
+                        await runSearch();
+                    }));
+                }
+            }
+
+            async function runSearch() {
+                const q = document.getElementById('searchInput').value.trim();
+                const items = await apiFetch('ContentHider/Api/Search?query=' + encodeURIComponent(q));
+                const container = document.getElementById('searchResults');
+                container.innerHTML = '';
+                for (const item of (items || [])) {
+                    container.appendChild(createItemCard(item, async (id, currentlyBlocked) => {
+                        if (currentlyBlocked) {
+                            await apiFetch('ContentHider/Api/Blocks/' + encodeURIComponent(id), { method: 'DELETE' });
+                        } else {
+                            await apiFetch('ContentHider/Api/Blocks/' + encodeURIComponent(id), { method: 'POST' });
+                        }
+                        await refreshAll();
+                        await runSearch();
+                    }));
+                }
+            }
+
+            async function setToggle(enabled, durationMinutes) {
+                const status = await apiFetch('ContentHider/Api/Toggle', {
+                    method: 'POST',
+                    body: JSON.stringify({ Enabled: enabled, DurationMinutes: durationMinutes })
+                });
+                renderStatus(status);
+            }
+
+            document.getElementById('btnResumeNow').addEventListener('click', () => setToggle(true, null));
+            document.getElementById('btnPause1h').addEventListener('click', () => setToggle(false, 60));
+            document.getElementById('btnPause3h').addEventListener('click', () => setToggle(false, 180));
+            document.getElementById('btnPauseManual').addEventListener('click', () => setToggle(false, 0));
+
+            document.getElementById('searchForm').addEventListener('submit', (e) => {
+                e.preventDefault();
+                runSearch();
+            });
+
+            document.getElementById('btnLogout').addEventListener('click', () => {
+                authToken = null;
+                sessionStorage.removeItem(STORAGE_KEY);
+                showLogin();
+            });
+
+            document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const errEl = document.getElementById('loginError');
+                errEl.textContent = '';
+                const Username = document.getElementById('loginUser').value.trim();
+                const Pw = document.getElementById('loginPass').value;
+                try {
+                    const res = await fetch('../Users/AuthenticateByName', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Emby-Authorization': 'MediaBrowser Client="ContentHiderPortal", Device="Browser", DeviceId="ContentHiderPortal", Version="1.0.0"'
+                        },
+                        body: JSON.stringify({ Username, Pw })
+                    });
+                    if (!res.ok) {
+                        errEl.textContent = 'Invalid username or password.';
+                        return;
+                    }
+                    const data = await res.json();
+                    authToken = data.AccessToken;
+                    sessionStorage.setItem(STORAGE_KEY, authToken);
+                    await refreshAll();
+                    await runSearch();
+                } catch (err) {
+                    errEl.textContent = 'Sign-in failed.';
+                }
+            });
+
+            authToken = discoverJellyfinToken();
+            if (authToken) {
+                refreshAll().then(runSearch).catch(showLogin);
+            } else {
+                showLogin();
+            }
+        })();
+    </script>
+</body>
+</html>
