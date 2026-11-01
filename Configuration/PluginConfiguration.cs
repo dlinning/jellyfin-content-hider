@@ -3,23 +3,7 @@ using MediaBrowser.Model.Plugins;
 namespace Jellyfin.Plugin.ContentHider.Configuration;
 
 /// <summary>
-/// The configuration options.
-/// </summary>
-public enum SomeOptions
-{
-    /// <summary>
-    /// Option one.
-    /// </summary>
-    OneOption,
-
-    /// <summary>
-    /// Second option.
-    /// </summary>
-    AnotherOption
-}
-
-/// <summary>
-/// Plugin configuration.
+/// Plugin configuration for Content Hider.
 /// </summary>
 public class PluginConfiguration : BasePluginConfiguration
 {
@@ -28,30 +12,48 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public PluginConfiguration()
     {
-        // set default options here
-        Options = SomeOptions.AnotherOption;
-        TrueFalseSetting = true;
-        AnInteger = 2;
-        AString = "string";
+        EnableWebUiInjection = true;
+        EnableMagicPlaylist = true;
+        MagicPlaylistName = "[Hide Content]";
+        DefaultPauseDurationMinutes = 60;
+        HideEmptyCollections = true;
+        NormalizeEpisodesToSeries = true;
+        CustomDatabasePath = string.Empty;
     }
 
     /// <summary>
-    /// Gets or sets a value indicating whether some true or false setting is enabled..
+    /// Gets or sets a value indicating whether the Jellyfin Web UI client script is injected in memory.
     /// </summary>
-    public bool TrueFalseSetting { get; set; }
+    public bool EnableWebUiInjection { get; set; }
 
     /// <summary>
-    /// Gets or sets an integer setting.
+    /// Gets or sets a value indicating whether per-user Magic Playlists are provisioned for TV and mobile apps.
     /// </summary>
-    public int AnInteger { get; set; }
+    public bool EnableMagicPlaylist { get; set; }
 
     /// <summary>
-    /// Gets or sets a string setting.
+    /// Gets or sets the display name of the per-user Magic Playlist.
     /// </summary>
-    public string AString { get; set; }
+    public string MagicPlaylistName { get; set; }
 
     /// <summary>
-    /// Gets or sets an enum option.
+    /// Gets or sets the default duration in minutes when pausing blocking (0 = manual re-enable only).
     /// </summary>
-    public SomeOptions Options { get; set; }
+    public int DefaultPauseDurationMinutes { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether collections (BoxSets) with 100% blocked items should be hidden automatically.
+    /// </summary>
+    public bool HideEmptyCollections { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether blocking an episode or season blocks its parent TV Series by default.
+    /// </summary>
+    public bool NormalizeEpisodesToSeries { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional custom file path on disk for the standalone SQLite database.
+    /// When empty, defaults to &lt;DataFolderPath&gt;/content_blocks.sqlite.
+    /// </summary>
+    public string CustomDatabasePath { get; set; }
 }
