@@ -84,9 +84,10 @@ mkdir -p "$DIST_DIR"
 
 dotnet publish "$ROOT_DIR/Jellyfin.Plugin.ContentHider.csproj" -c Release -o "$DIST_DIR/publish"
 
-cp -R "$DIST_DIR/publish/"* "$DIST_DIR/"
-# Ensure host-provided Jellyfin and MediaBrowser assemblies are not bundled
-rm -f "$DIST_DIR"/Jellyfin.Controller.dll "$DIST_DIR"/Jellyfin.Model.dll "$DIST_DIR"/MediaBrowser.*.dll
+cp "$DIST_DIR/publish/Jellyfin.Plugin.ContentHider.dll" "$DIST_DIR/"
+if [[ -f "$DIST_DIR/publish/Jellyfin.Plugin.ContentHider.pdb" ]]; then
+    cp "$DIST_DIR/publish/Jellyfin.Plugin.ContentHider.pdb" "$DIST_DIR/"
+fi
 rm -rf "$DIST_DIR/publish"
 
 TIMESTAMP_ISO="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -96,7 +97,7 @@ cat > "$DIST_DIR/meta.json" <<EOF
 {
   "category": "General",
   "changelog": "Release ${TAG_NAME} of Jellyfin Content Hider.",
-  "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients using an isolated on-disk SQLite database.",
+  "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients ",
   "guid": "$PLUGIN_GUID",
   "name": "Content Hider",
   "overview": "Per-user movie, TV show, and collection hiding across all clients.",
@@ -151,7 +152,7 @@ if not data:
     data = [{
         "guid": "$PLUGIN_GUID",
         "name": "Content Hider",
-        "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients using an isolated on-disk SQLite database.",
+        "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients ",
         "overview": "Per-user movie, TV show, and collection hiding across all clients.",
         "owner": "$REPO_OWNER",
         "category": "General",

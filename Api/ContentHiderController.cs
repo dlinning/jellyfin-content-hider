@@ -34,7 +34,7 @@ public sealed class ContentHiderController : ControllerBase
     /// <summary>
     /// Initializes a new instance of the <see cref="ContentHiderController"/> class.
     /// </summary>
-    /// <param name="repository">The SQLite content block repository.</param>
+    /// <param name="repository">The content block repository.</param>
     /// <param name="blockService">The content block service.</param>
     /// <param name="magicPlaylistService">The magic playlist service.</param>
     /// <param name="libraryManager">The Jellyfin library manager.</param>
@@ -170,7 +170,7 @@ public sealed class ContentHiderController : ControllerBase
     }
 
     /// <summary>
-    /// Adds a content block for the authenticated user and persists it to the on-disk SQLite database.
+    /// Adds a content block for the authenticated user and persists it to on-disk storage.
     /// </summary>
     /// <param name="mediaId">The media item identifier to hide.</param>
     /// <param name="exact">If <c>true</c>, blocks the exact item without normalizing episodes/seasons to their parent series.</param>
@@ -200,7 +200,7 @@ public sealed class ContentHiderController : ControllerBase
     }
 
     /// <summary>
-    /// Removes a content block for the authenticated user from the on-disk SQLite database.
+    /// Removes a content block for the authenticated user from on-disk storage.
     /// </summary>
     /// <param name="mediaId">The media item identifier to unhide.</param>
     /// <returns>204 No Content.</returns>
@@ -274,9 +274,9 @@ public sealed class ContentHiderController : ControllerBase
     }
 
     /// <summary>
-    /// Returns on-disk SQLite database status for the Admin Dashboard configuration page.
+    /// Returns on-disk storage status for the Admin Dashboard configuration page.
     /// </summary>
-    /// <returns>SQLite database info DTO.</returns>
+    /// <returns>Storage info DTO.</returns>
     [HttpGet("Api/AdminInfo")]
     [Authorize]
     [ProducesResponseType(typeof(AdminDatabaseInfoDto), StatusCodes.Status200OK)]

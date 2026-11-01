@@ -2,11 +2,19 @@
   {
     "guid": "3867d4a9-959b-476d-b1a6-a912a4741924",
     "name": "Content Hider",
-    "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients using an isolated on-disk SQLite database.",
+    "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients ",
     "overview": "Per-user movie, TV show, and collection hiding across all clients.",
     "owner": "dlinning",
     "category": "General",
     "versions": [
+      {
+        "version": "0.0.6.0",
+        "changelog": "Release v0.0.6 of Jellyfin Content Hider.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/dlinning/jellyfin-content-hider/releases/download/v0.0.6/ContentHider_0.0.6.0.zip",
+        "checksum": "641bcec12eac713c22bfdc9160e019ed",
+        "timestamp": "2026-11-01 04:28:37"
+      },
       {
         "version": "0.0.5.0",
         "changelog": "Release v0.0.5.0 of Jellyfin Content Hider.",

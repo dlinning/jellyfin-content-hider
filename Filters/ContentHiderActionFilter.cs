@@ -63,7 +63,7 @@ public sealed class ContentHiderActionFilter : IAsyncActionFilter
             return;
         }
 
-        // Layer 1: Pre-action excludeItemIds injection for accurate SQLite pagination & TotalRecordCount.
+        // Layer 1: Pre-action excludeItemIds injection for accurate pagination & TotalRecordCount.
         InjectExcludeItemIds(context.ActionArguments, blockedIds);
 
         var executedContext = await next().ConfigureAwait(false);

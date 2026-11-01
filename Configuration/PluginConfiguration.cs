@@ -52,8 +52,8 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool NormalizeEpisodesToSeries { get; set; }
 
     /// <summary>
-    /// Gets or sets an optional custom file path on disk for the standalone SQLite database.
-    /// When empty, defaults to &lt;DataFolderPath&gt;/content_blocks.sqlite.
+    /// Gets or sets an optional custom file path on disk for the standalone storage file.
+    /// When empty, defaults to &lt;DataFolderPath&gt;/content_blocks.json.
     /// </summary>
     public string CustomDatabasePath { get; set; }
 }

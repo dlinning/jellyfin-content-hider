@@ -20,7 +20,6 @@ using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Moq;
-using SQLitePCL;
 using Xunit;
 
 namespace Jellyfin.Plugin.ContentHider.Tests;
@@ -28,23 +27,18 @@ namespace Jellyfin.Plugin.ContentHider.Tests;
 public sealed class ContentHiderActionFilterTests : IDisposable
 {
     private readonly string _tempDir;
-    private readonly string _dbPath;
-    private readonly SqliteContentBlockRepository _repository;
+    private readonly string _storagePath;
+    private readonly JsonContentBlockRepository _repository;
     private readonly Mock<ILibraryManager> _libraryManagerMock;
     private readonly ContentBlockService _blockService;
     private readonly ContentHiderActionFilter _filter;
-
-    static ContentHiderActionFilterTests()
-    {
-        Batteries_V2.Init();
-    }
 
     public ContentHiderActionFilterTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "ContentHiderFilterTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
-        _dbPath = Path.Combine(_tempDir, "content_blocks.sqlite");
-        _repository = new SqliteContentBlockRepository(_dbPath);
+        _storagePath = Path.Combine(_tempDir, "content_blocks.json");
+        _repository = new JsonContentBlockRepository(_storagePath);
         _libraryManagerMock = new Mock<ILibraryManager>();
         _blockService = new ContentBlockService(
             _repository,

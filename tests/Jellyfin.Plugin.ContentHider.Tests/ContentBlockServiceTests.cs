@@ -11,7 +11,6 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Search;
 using Moq;
-using SQLitePCL;
 using Xunit;
 
 namespace Jellyfin.Plugin.ContentHider.Tests;
@@ -19,23 +18,18 @@ namespace Jellyfin.Plugin.ContentHider.Tests;
 public sealed class ContentBlockServiceTests : IDisposable
 {
     private readonly string _tempDir;
-    private readonly string _dbPath;
-    private readonly SqliteContentBlockRepository _repository;
+    private readonly string _storagePath;
+    private readonly JsonContentBlockRepository _repository;
     private readonly Mock<ILibraryManager> _libraryManagerMock;
     private readonly PluginConfiguration _config;
     private DateTime _currentUtc;
-
-    static ContentBlockServiceTests()
-    {
-        Batteries_V2.Init();
-    }
 
     public ContentBlockServiceTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "ContentHiderSvcTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
-        _dbPath = Path.Combine(_tempDir, "content_blocks.sqlite");
-        _repository = new SqliteContentBlockRepository(_dbPath);
+        _storagePath = Path.Combine(_tempDir, "content_blocks.json");
+        _repository = new JsonContentBlockRepository(_storagePath);
         _libraryManagerMock = new Mock<ILibraryManager>();
         _config = new PluginConfiguration
         {
@@ -70,7 +64,7 @@ public sealed class ContentBlockServiceTests : IDisposable
         Assert.False(service.IsBlockingActive(userId));
         Assert.Empty(service.GetExpandedBlockedIds(userId));
 
-        // Verify persisted to SQLite on disk.
+        // Verify persisted to storage on disk.
         var diskSettings = _repository.GetUserSettings(userId);
         Assert.NotNull(diskSettings);
         Assert.False(diskSettings.IsBlockingEnabled);
@@ -138,7 +132,7 @@ public sealed class ContentBlockServiceTests : IDisposable
     }
 
     [Fact]
-    public void ExternalSqliteModificationOnDisk_IsDetectedAndReloadedAutomatically()
+    public void ExternalStorageModificationOnDisk_IsDetectedAndReloadedAutomatically()
     {
         var service = CreateService();
         var userId = Guid.NewGuid();
@@ -146,10 +140,10 @@ public sealed class ContentBlockServiceTests : IDisposable
 
         Assert.Empty(service.GetUserBlocks(userId));
 
-        // Simulate an external write to the on-disk .sqlite file and bump last-write timestamp.
-        var externalRepo = new SqliteContentBlockRepository(_dbPath);
+        // Simulate an external write to the on-disk .json file and bump last-write timestamp.
+        var externalRepo = new JsonContentBlockRepository(_storagePath);
         externalRepo.UpsertBlock(new ContentBlockRecord(userId, externalMovieId, "Movie", "Added Externally", _currentUtc));
-        File.SetLastWriteTimeUtc(_dbPath, DateTime.UtcNow.AddSeconds(5));
+        File.SetLastWriteTimeUtc(_storagePath, DateTime.UtcNow.AddSeconds(5));
 
         var blocks = service.GetUserBlocks(userId);
         Assert.Single(blocks);

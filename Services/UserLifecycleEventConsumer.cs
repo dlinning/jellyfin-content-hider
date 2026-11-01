@@ -7,7 +7,7 @@ namespace Jellyfin.Plugin.ContentHider.Services;
 
 /// <summary>
 /// Consumes native Jellyfin user lifecycle events (<see cref="UserCreatedEventArgs"/> and <see cref="UserDeletedEventArgs"/>)
-/// to provision Magic Playlists for new users and purge SQLite rows when users are deleted.
+/// to provision Magic Playlists for new users and purge stored data when users are deleted.
 /// </summary>
 public sealed class UserLifecycleEventConsumer :
     IEventConsumer<UserCreatedEventArgs>,

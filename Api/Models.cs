@@ -58,11 +58,11 @@ public sealed record ContentHiderItemDto(
     DateTime? CreatedAtUtc);
 
 /// <summary>
-/// Response DTO describing the on-disk SQLite database status for the Admin Dashboard configuration page.
+/// Response DTO describing the on-disk storage status for the Admin Dashboard configuration page.
 /// </summary>
-/// <param name="DatabaseFilePath">The absolute path on disk to <c>content_blocks.sqlite</c>.</param>
+/// <param name="DatabaseFilePath">The absolute path on disk to <c>content_blocks.json</c>.</param>
 /// <param name="DatabaseFileExists">Whether the file currently exists on disk.</param>
-/// <param name="DatabaseFileSizeBytes">The size of the SQLite file in bytes.</param>
+/// <param name="DatabaseFileSizeBytes">The size of the storage file in bytes.</param>
 /// <param name="TotalBlocksCount">Total number of persisted content blocks across all users.</param>
 public sealed record AdminDatabaseInfoDto(
     string DatabaseFilePath,

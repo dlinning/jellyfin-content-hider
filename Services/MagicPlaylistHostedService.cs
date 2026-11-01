@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.ContentHider.Services;
 
 /// <summary>
-/// Background hosted service that initializes the SQLite database, provisions per-user Magic Playlists,
+/// Background hosted service that initializes on-disk storage, provisions per-user Magic Playlists,
 /// and periodically checks for expired pause timers to restore blocking and clear Favorite indicators.
 /// </summary>
 public sealed partial class MagicPlaylistHostedService : IHostedService, IDisposable

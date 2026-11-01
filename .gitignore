@@ -3,5 +3,7 @@ obj/
 dist/
 *.sqlite
 *.sqlite-*
+content_blocks.json
+*.tmp
 .vs/
 .DS_Store

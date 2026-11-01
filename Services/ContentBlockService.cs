@@ -17,7 +17,7 @@ using MediaBrowser.Model.Search;
 namespace Jellyfin.Plugin.ContentHider.Services;
 
 /// <summary>
-/// Coordinates per-user content blocks and toggle states with write-through SQLite persistence
+/// Coordinates per-user content blocks and toggle states with write-through JSON persistence
 /// and external file-change synchronization.
 /// </summary>
 public sealed class ContentBlockService : IContentBlockService
@@ -38,7 +38,7 @@ public sealed class ContentBlockService : IContentBlockService
     /// <summary>
     /// Initializes a new instance of the <see cref="ContentBlockService"/> class for DI.
     /// </summary>
-    /// <param name="repository">The SQLite content block repository.</param>
+    /// <param name="repository">The content block repository.</param>
     /// <param name="libraryManager">The Jellyfin library manager.</param>
     public ContentBlockService(
         IContentBlockRepository repository,
@@ -54,7 +54,7 @@ public sealed class ContentBlockService : IContentBlockService
     /// <summary>
     /// Initializes a new instance of the <see cref="ContentBlockService"/> class with custom providers for testing.
     /// </summary>
-    /// <param name="repository">The SQLite content block repository.</param>
+    /// <param name="repository">The content block repository.</param>
     /// <param name="libraryManager">The Jellyfin library manager.</param>
     /// <param name="configProvider">Configuration provider delegate.</param>
     /// <param name="utcNowProvider">Clock delegate for deterministic timer testing.</param>

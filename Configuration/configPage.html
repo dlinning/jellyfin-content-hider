@@ -12,7 +12,7 @@
                     <div class="sectionTitleContainer flex align-items-center">
                         <h2 class="sectionTitle">Content Hider Settings</h2>
                     </div>
-                    <p>Per-user movie, show, and collection hiding across Web, Mobile, and TV clients backed by an isolated on-disk SQLite database.</p>
+                    <p>Per-user movie, show, and collection hiding across Web, Mobile, and TV clients.</p>
                     <p>
                         <a is="emby-linkbutton" class="raised button-alt emby-button" href="../ContentHider" target="_blank" rel="noopener">
                             <span>Open Self-Service User Portal (/ContentHider)</span>
@@ -21,7 +21,7 @@
                 </div>
 
                 <div class="verticalSection" style="background: rgba(255,255,255,0.04); padding: 1em; border-radius: 6px; margin-bottom: 1.5em;">
-                    <h3 style="margin-top: 0;">Standalone SQLite Database Status</h3>
+                    <h3 style="margin-top: 0;">Storage Status</h3>
                     <div><strong>On-Disk Path:</strong> <code id="chDbPath">Loading...</code></div>
                     <div style="margin-top: 0.4em;"><strong>Status:</strong> <span id="chDbStatus">Loading...</span></div>
                     <div style="margin-top: 0.4em;"><strong>Total Persisted Blocks (All Users):</strong> <span id="chTotalBlocks">-</span></div>
@@ -72,9 +72,9 @@
                     </div>
 
                     <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="CustomDatabasePath">Custom SQLite Database File Path (Optional)</label>
+                        <label class="inputLabel inputLabelUnfocused" for="CustomDatabasePath">Custom Storage File Path (Optional)</label>
                         <input id="CustomDatabasePath" name="CustomDatabasePath" type="text" is="emby-input" />
-                        <div class="fieldDescription">Leave blank to use the default isolated plugin path (<code>&lt;PluginDataFolder&gt;/content_blocks.sqlite</code>).</div>
+                        <div class="fieldDescription">Leave blank to use the default isolated plugin path (<code>&lt;PluginDataFolder&gt;/content_blocks.json</code>).</div>
                     </div>
 
                     <div>

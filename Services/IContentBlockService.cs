@@ -12,12 +12,12 @@ namespace Jellyfin.Plugin.ContentHider.Services;
 public interface IContentBlockService
 {
     /// <summary>
-    /// Gets the resolved path to the on-disk SQLite database file.
+    /// Gets the resolved path to the on-disk storage file.
     /// </summary>
     string DatabaseFilePath { get; }
 
     /// <summary>
-    /// Reloads all cached state from the on-disk SQLite database.
+    /// Reloads all cached state from on-disk storage.
     /// </summary>
     void ReloadFromDisk();
 
@@ -38,7 +38,7 @@ public interface IContentBlockService
 
     /// <summary>
     /// Sets whether content blocking is enabled for the user, with an optional pause duration in minutes.
-    /// Persists immediately to the on-disk SQLite database.
+    /// Persists immediately to on-disk storage.
     /// </summary>
     /// <param name="userId">The Jellyfin user identifier.</param>
     /// <param name="enabled">Whether blocking should be active.</param>

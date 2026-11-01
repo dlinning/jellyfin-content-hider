@@ -4,17 +4,17 @@ using System.Collections.Generic;
 namespace Jellyfin.Plugin.ContentHider.Data;
 
 /// <summary>
-/// Defines persistence operations against the standalone on-disk SQLite database (<c>content_blocks.sqlite</c>).
+/// Defines persistence operations against the standalone on-disk storage (<c>content_blocks.json</c>).
 /// </summary>
 public interface IContentBlockRepository
 {
     /// <summary>
-    /// Gets the resolved absolute path on disk to the SQLite database file.
+    /// Gets the resolved absolute path on disk to the storage file.
     /// </summary>
     string DatabaseFilePath { get; }
 
     /// <summary>
-    /// Ensures the SQLite database file and schema exist on disk.
+    /// Ensures the storage file and data structures exist on disk.
     /// </summary>
     void EnsureInitialized();
 

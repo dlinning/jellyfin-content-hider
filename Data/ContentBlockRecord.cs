@@ -3,7 +3,7 @@ using System;
 namespace Jellyfin.Plugin.ContentHider.Data;
 
 /// <summary>
-/// Represents a single content block row in the <c>content_blocks</c> SQLite table.
+/// Represents a single content block record in on-disk storage.
 /// </summary>
 /// <param name="UserId">The Jellyfin user identifier.</param>
 /// <param name="MediaId">The blocked media item identifier.</param>

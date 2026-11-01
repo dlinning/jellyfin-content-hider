@@ -27,7 +27,6 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using SQLitePCL;
 using Xunit;
 
 namespace Jellyfin.Plugin.ContentHider.Tests;
@@ -35,8 +34,8 @@ namespace Jellyfin.Plugin.ContentHider.Tests;
 public sealed class MagicPlaylistAndLifecycleTests : IDisposable
 {
     private readonly string _tempDir;
-    private readonly string _dbPath;
-    private readonly SqliteContentBlockRepository _repository;
+    private readonly string _storagePath;
+    private readonly JsonContentBlockRepository _repository;
     private readonly Mock<ILibraryManager> _libraryManagerMock;
     private readonly Mock<IUserManager> _userManagerMock;
     private readonly Mock<IDtoService> _dtoServiceMock;
@@ -46,17 +45,12 @@ public sealed class MagicPlaylistAndLifecycleTests : IDisposable
     private readonly MagicPlaylistService _magicPlaylistService;
     private readonly MagicPlaylistActionFilter _magicFilter;
 
-    static MagicPlaylistAndLifecycleTests()
-    {
-        Batteries_V2.Init();
-    }
-
     public MagicPlaylistAndLifecycleTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "ContentHiderMagicTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
-        _dbPath = Path.Combine(_tempDir, "content_blocks.sqlite");
-        _repository = new SqliteContentBlockRepository(_dbPath);
+        _storagePath = Path.Combine(_tempDir, "content_blocks.json");
+        _repository = new JsonContentBlockRepository(_storagePath);
         _libraryManagerMock = new Mock<ILibraryManager>();
         _userManagerMock = new Mock<IUserManager>();
         _dtoServiceMock = new Mock<IDtoService>();
@@ -214,7 +208,7 @@ public sealed class MagicPlaylistAndLifecycleTests : IDisposable
         await consumer.OnEvent(new UserCreatedEventArgs(activeUser));
         Assert.Equal(provisionedPlaylistId, _blockService.GetMagicPlaylistId(activeUser.Id));
 
-        // 2. UserDeletedEventArgs purges user blocks & settings from SQLite.
+        // 2. UserDeletedEventArgs purges user blocks & settings from storage.
         _blockService.AddBlock(deletedUser.Id, Guid.NewGuid(), exactItemOnly: true);
         Assert.Single(_repository.GetUserBlocks(deletedUser.Id));
         await consumer.OnEvent(new UserDeletedEventArgs(deletedUser));

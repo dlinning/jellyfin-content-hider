@@ -3,7 +3,7 @@ using System;
 namespace Jellyfin.Plugin.ContentHider.Data;
 
 /// <summary>
-/// Represents a user's content-blocking toggle settings persisted in the <c>user_block_settings</c> SQLite table.
+/// Represents a user's content-blocking toggle settings persisted in on-disk storage.
 /// </summary>
 /// <param name="UserId">The Jellyfin user identifier.</param>
 /// <param name="IsBlockingEnabled">Whether content blocking is enabled for this user.</param>

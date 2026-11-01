@@ -27,7 +27,7 @@ public sealed partial class ContentHiderCleanupTask : IScheduledTask
     /// <summary>
     /// Initializes a new instance of the <see cref="ContentHiderCleanupTask"/> class.
     /// </summary>
-    /// <param name="repository">The SQLite content block repository.</param>
+    /// <param name="repository">The content block repository.</param>
     /// <param name="blockService">The content block service.</param>
     /// <param name="magicPlaylistService">The magic playlist service.</param>
     /// <param name="userManager">The Jellyfin user manager.</param>
@@ -63,7 +63,7 @@ public sealed partial class ContentHiderCleanupTask : IScheduledTask
     public string Key => "ContentHiderCleanupTask";
 
     /// <inheritdoc />
-    public string Description => "Prunes orphaned content blocks for deleted users or media items in content_blocks.sqlite and synchronizes per-user Magic Playlists.";
+    public string Description => "Prunes orphaned content blocks for deleted users or media items in content_blocks.json and synchronizes per-user Magic Playlists.";
 
     /// <inheritdoc />
     public string Category => "Content Hider";

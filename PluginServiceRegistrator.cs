@@ -13,7 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Jellyfin.Plugin.ContentHider;
 
 /// <summary>
-/// Registers Content Hider services, SQLite persistence, MVC action filters, middleware, and event consumers
+/// Registers Content Hider services, JSON persistence, MVC action filters, middleware, and event consumers
 /// with Jellyfin's dependency injection container at server startup.
 /// </summary>
 public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
@@ -21,7 +21,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
     /// <inheritdoc />
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        serviceCollection.AddSingleton<IContentBlockRepository, SqliteContentBlockRepository>();
+        serviceCollection.AddSingleton<IContentBlockRepository, JsonContentBlockRepository>();
         serviceCollection.AddSingleton<IContentBlockService, ContentBlockService>();
         serviceCollection.AddSingleton<IMagicPlaylistService, MagicPlaylistService>();
 
