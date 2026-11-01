@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.0.5.0",
+        "changelog": "Fix missing dependencies",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/dlinning/jellyfin-content-hider/releases/download/v0.0.5/ContentHider_0.0.5.0.zip",
+        "checksum": "e6c2fed0931d52c7c4a582893052b639",
+        "timestamp": "2026-11-01 04:03:41"
+      },
+      {
         "version": "0.0.4.0",
         "changelog": "Release v0.0.4 of Jellyfin Content Hider.",
         "targetAbi": "12.0.0.0",
