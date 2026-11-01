@@ -284,13 +284,16 @@ public sealed class ContentHiderController : ControllerBase
     {
         _repository.EnsureInitialized();
         var dbPath = _repository.DatabaseFilePath;
-        var fileInfo = new FileInfo(dbPath);
+        var dirInfo = new DirectoryInfo(dbPath);
+        var totalSize = dirInfo.Exists
+            ? dirInfo.EnumerateFiles("*.json", SearchOption.AllDirectories).Sum(f => f.Length)
+            : 0L;
         var allBlocks = _repository.GetAllBlocks();
 
         return Ok(new AdminDatabaseInfoDto(
             dbPath,
-            fileInfo.Exists,
-            fileInfo.Exists ? fileInfo.Length : 0L,
+            dirInfo.Exists,
+            totalSize,
             allBlocks.Count));
     }
 

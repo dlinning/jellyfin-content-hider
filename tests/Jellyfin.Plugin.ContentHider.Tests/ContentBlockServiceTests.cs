@@ -28,7 +28,7 @@ public sealed class ContentBlockServiceTests : IDisposable
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "ContentHiderSvcTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
-        _storagePath = Path.Combine(_tempDir, "content_blocks.json");
+        _storagePath = Path.Combine(_tempDir, "users");
         _repository = new JsonContentBlockRepository(_storagePath);
         _libraryManagerMock = new Mock<ILibraryManager>();
         _config = new PluginConfiguration
@@ -140,14 +140,37 @@ public sealed class ContentBlockServiceTests : IDisposable
 
         Assert.Empty(service.GetUserBlocks(userId));
 
-        // Simulate an external write to the on-disk .json file and bump last-write timestamp.
+        // Simulate an external write to the on-disk user .json file and bump last-write timestamp.
         var externalRepo = new JsonContentBlockRepository(_storagePath);
         externalRepo.UpsertBlock(new ContentBlockRecord(userId, externalMovieId, "Movie", "Added Externally", _currentUtc));
-        File.SetLastWriteTimeUtc(_storagePath, DateTime.UtcNow.AddSeconds(5));
+
+        var userFile = Path.Combine(_storagePath, $"{userId:D}.json");
+        File.SetLastWriteTimeUtc(userFile, DateTime.UtcNow.AddSeconds(5));
 
         var blocks = service.GetUserBlocks(userId);
         Assert.Single(blocks);
         Assert.Equal(externalMovieId, blocks[0].MediaId);
+    }
+
+    [Fact]
+    public void InactiveUserSessions_AreEvictedFromMemory_AndReloadedLazily()
+    {
+        var service = CreateService();
+        var userId = Guid.NewGuid();
+        var movieId = Guid.NewGuid();
+
+        service.AddBlock(userId, movieId);
+        Assert.Single(service.GetUserBlocks(userId));
+
+        // Evict sessions inactive for >= 10 minutes (simulate advancing clock)
+        _currentUtc = _currentUtc.AddMinutes(45);
+        var evicted = service.EvictInactiveSessions(TimeSpan.FromMinutes(30));
+        Assert.Equal(1, evicted);
+
+        // When user makes a request again, lazily reloads from disk
+        var blocksAfterEvict = service.GetUserBlocks(userId);
+        Assert.Single(blocksAfterEvict);
+        Assert.Equal(movieId, blocksAfterEvict[0].MediaId);
     }
 
     private ContentBlockService CreateService()

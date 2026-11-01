@@ -119,6 +119,13 @@ public interface IContentBlockService
     IReadOnlyList<Guid> ProcessExpiredTimers();
 
     /// <summary>
+    /// Evicts inactive user configurations from in-memory cache to release RAM.
+    /// </summary>
+    /// <param name="idleThreshold">Optional idle duration threshold. Defaults to 30 minutes.</param>
+    /// <returns>The number of inactive user sessions evicted from memory.</returns>
+    int EvictInactiveSessions(TimeSpan? idleThreshold = null);
+
+    /// <summary>
     /// Removes all blocks and settings for a deleted user.
     /// </summary>
     /// <param name="userId">The deleted user identifier.</param>

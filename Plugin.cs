@@ -40,7 +40,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public static Plugin? Instance { get; private set; }
 
     /// <summary>
-    /// Gets the resolved on-disk file path for the isolated storage file.
+    /// Gets the resolved on-disk file path for the isolated storage directory.
     /// </summary>
     public string DatabaseFilePath
     {
@@ -52,7 +52,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 return custom.Trim();
             }
 
-            return Path.Combine(DataFolderPath, "content_blocks.json");
+            return Path.Combine(DataFolderPath, "users");
         }
     }
 

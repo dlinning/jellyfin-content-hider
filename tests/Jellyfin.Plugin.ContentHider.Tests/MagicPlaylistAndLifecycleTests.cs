@@ -49,7 +49,7 @@ public sealed class MagicPlaylistAndLifecycleTests : IDisposable
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "ContentHiderMagicTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
-        _storagePath = Path.Combine(_tempDir, "content_blocks.json");
+        _storagePath = Path.Combine(_tempDir, "users");
         _repository = new JsonContentBlockRepository(_storagePath);
         _libraryManagerMock = new Mock<ILibraryManager>();
         _userManagerMock = new Mock<IUserManager>();

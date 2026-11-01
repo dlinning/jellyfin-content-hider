@@ -17,23 +17,24 @@ using MediaBrowser.Model.Search;
 namespace Jellyfin.Plugin.ContentHider.Services;
 
 /// <summary>
-/// Coordinates per-user content blocks and toggle states with write-through JSON persistence
-/// and external file-change synchronization.
+/// Coordinates per-user content blocks and toggle states with write-through isolated JSON persistence,
+/// per-user thread-safe locking, lazy on-demand loading, and automatic inactive session RAM eviction.
 /// </summary>
 public sealed class ContentBlockService : IContentBlockService
 {
     private static readonly HashSet<Guid> EmptyGuidSet = [];
 
+    /// <summary>
+    /// Default inactivity duration before an idle user session is evicted from in-memory cache (30 minutes).
+    /// </summary>
+    public static readonly TimeSpan DefaultInactivityTimeout = TimeSpan.FromMinutes(30);
+
     private readonly IContentBlockRepository _repository;
     private readonly ILibraryManager _libraryManager;
     private readonly Func<PluginConfiguration> _configProvider;
     private readonly Func<DateTime> _utcNowProvider;
-    private readonly Lock _stateLock = new();
 
-    private readonly ConcurrentDictionary<Guid, Dictionary<Guid, ContentBlockRecord>> _userBlocks = new();
-    private readonly ConcurrentDictionary<Guid, UserBlockSettings> _userSettings = new();
-    private readonly ConcurrentDictionary<Guid, HashSet<Guid>> _expandedCache = new();
-    private DateTime _lastKnownDiskWriteUtc = DateTime.MinValue;
+    private readonly ConcurrentDictionary<Guid, UserSessionState> _userSessions = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ContentBlockService"/> class for DI.
@@ -74,7 +75,7 @@ public sealed class ContentBlockService : IContentBlockService
         _configProvider = configProvider;
         _utcNowProvider = utcNowProvider;
 
-        ReloadFromDisk();
+        _repository.EnsureInitialized();
     }
 
     /// <inheritdoc />
@@ -83,27 +84,29 @@ public sealed class ContentBlockService : IContentBlockService
     /// <inheritdoc />
     public void ReloadFromDisk()
     {
-        lock (_stateLock)
+        _repository.EnsureInitialized();
+        _userSessions.Clear();
+    }
+
+    /// <inheritdoc />
+    public int EvictInactiveSessions(TimeSpan? idleThreshold = null)
+    {
+        var threshold = idleThreshold ?? DefaultInactivityTimeout;
+        var now = _utcNowProvider();
+        var evictedCount = 0;
+
+        foreach (var (userId, session) in _userSessions)
         {
-            _repository.EnsureInitialized();
-
-            _userBlocks.Clear();
-            _userSettings.Clear();
-            _expandedCache.Clear();
-
-            foreach (var block in _repository.GetAllBlocks())
+            if (now - session.LastAccessedUtc > threshold)
             {
-                var dict = _userBlocks.GetOrAdd(block.UserId, static _ => []);
-                dict[block.MediaId] = block;
+                if (_userSessions.TryRemove(userId, out _))
+                {
+                    evictedCount++;
+                }
             }
-
-            foreach (var settings in _repository.GetAllUserSettings())
-            {
-                _userSettings[settings.UserId] = settings;
-            }
-
-            UpdateLastDiskTimestampCore();
         }
+
+        return evictedCount;
     }
 
     /// <inheritdoc />
@@ -114,106 +117,103 @@ public sealed class ContentBlockService : IContentBlockService
             return false;
         }
 
-        EnsureDiskSynced();
-
-        if (!_userSettings.TryGetValue(userId, out var settings))
+        var session = GetOrLoadSession(userId);
+        return session.Execute(() =>
         {
-            return true;
-        }
+            var settings = session.Settings;
+            if (settings.IsBlockingEnabled)
+            {
+                return true;
+            }
 
-        if (settings.IsBlockingEnabled)
-        {
-            return true;
-        }
+            var now = _utcNowProvider();
+            if (settings.DisabledUntilUtc.HasValue && settings.DisabledUntilUtc.Value <= now)
+            {
+                // Pause timer expired: persist re-enabled state to disk immediately.
+                SetBlockingEnabledInternal(session, true, null);
+                return true;
+            }
 
-        var now = _utcNowProvider();
-        if (settings.DisabledUntilUtc.HasValue && settings.DisabledUntilUtc.Value <= now)
-        {
-            // Pause timer expired: persist re-enabled state to disk immediately.
-            SetBlockingEnabled(userId, true);
-            return true;
-        }
-
-        return false;
+            return false;
+        });
     }
 
     /// <inheritdoc />
     public UserBlockSettings GetUserSettings(Guid userId)
     {
-        EnsureDiskSynced();
-        _ = IsBlockingActive(userId);
-
-        if (_userSettings.TryGetValue(userId, out var existing))
+        if (userId == Guid.Empty)
         {
-            return existing;
+            return new UserBlockSettings(Guid.Empty, true, null, null, _utcNowProvider());
         }
 
-        return new UserBlockSettings(userId, true, null, null, _utcNowProvider());
+        var session = GetOrLoadSession(userId);
+        return session.Execute(() =>
+        {
+            _ = IsBlockingActiveInternal(session);
+            return session.Settings;
+        });
     }
 
     /// <inheritdoc />
     public UserBlockSettings SetBlockingEnabled(Guid userId, bool enabled, int? pauseDurationMinutes = null)
     {
-        lock (_stateLock)
+        if (userId == Guid.Empty)
         {
-            var now = _utcNowProvider();
-            var existing = _userSettings.GetValueOrDefault(userId);
-            DateTime? disabledUntil = null;
-
-            if (!enabled)
-            {
-                var effectiveMinutes = pauseDurationMinutes ?? _configProvider().DefaultPauseDurationMinutes;
-                if (effectiveMinutes > 0)
-                {
-                    disabledUntil = now.AddMinutes(effectiveMinutes);
-                }
-            }
-
-            var updated = new UserBlockSettings(
-                userId,
-                enabled,
-                disabledUntil,
-                existing?.MagicPlaylistId,
-                now);
-
-            _repository.UpsertUserSettings(updated);
-            _userSettings[userId] = updated;
-            UpdateLastDiskTimestampCore();
-            return updated;
+            throw new ArgumentException("User ID cannot be empty.", nameof(userId));
         }
+
+        var session = GetOrLoadSession(userId);
+        return session.Execute(() => SetBlockingEnabledInternal(session, enabled, pauseDurationMinutes));
     }
 
     /// <inheritdoc />
     public void SetMagicPlaylistId(Guid userId, Guid playlistId)
     {
-        lock (_stateLock)
+        if (userId == Guid.Empty)
+        {
+            throw new ArgumentException("User ID cannot be empty.", nameof(userId));
+        }
+
+        var session = GetOrLoadSession(userId);
+        session.Execute(() =>
         {
             var now = _utcNowProvider();
-            var existing = _userSettings.GetValueOrDefault(userId);
+            var existing = session.Settings;
             var updated = new UserBlockSettings(
                 userId,
-                existing?.IsBlockingEnabled ?? true,
-                existing?.DisabledUntilUtc,
+                existing.IsBlockingEnabled,
+                existing.DisabledUntilUtc,
                 playlistId,
                 now);
 
             _repository.UpsertUserSettings(updated);
-            _userSettings[userId] = updated;
-            UpdateLastDiskTimestampCore();
-        }
+            session.Settings = updated;
+            session.LastDiskWriteUtc = GetUserFileTimestamp(userId);
+        });
     }
 
     /// <inheritdoc />
     public Guid? GetMagicPlaylistId(Guid userId)
     {
-        EnsureDiskSynced();
-        return _userSettings.TryGetValue(userId, out var settings) ? settings.MagicPlaylistId : null;
+        if (userId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var session = GetOrLoadSession(userId);
+        return session.Execute(() => session.Settings.MagicPlaylistId);
     }
 
     /// <inheritdoc />
     public ContentBlockRecord AddBlock(Guid userId, Guid mediaId, bool exactItemOnly = false)
     {
-        lock (_stateLock)
+        if (userId == Guid.Empty)
+        {
+            throw new ArgumentException("User ID cannot be empty.", nameof(userId));
+        }
+
+        var session = GetOrLoadSession(userId);
+        return session.Execute(() =>
         {
             var config = _configProvider();
             var targetId = mediaId;
@@ -264,23 +264,28 @@ public sealed class ContentBlockService : IContentBlockService
             var record = new ContentBlockRecord(userId, targetId, mediaType, mediaName, _utcNowProvider());
             _repository.UpsertBlock(record);
 
-            var dict = _userBlocks.GetOrAdd(userId, static _ => []);
-            dict[targetId] = record;
-            _expandedCache.TryRemove(userId, out _);
-            UpdateLastDiskTimestampCore();
+            session.DirectBlocks[targetId] = record;
+            session.ExpandedBlockedIds = null;
+            session.LastDiskWriteUtc = GetUserFileTimestamp(userId);
             return record;
-        }
+        });
     }
 
     /// <inheritdoc />
     public bool RemoveBlock(Guid userId, Guid mediaId)
     {
-        lock (_stateLock)
+        if (userId == Guid.Empty || mediaId == Guid.Empty)
+        {
+            return false;
+        }
+
+        var session = GetOrLoadSession(userId);
+        return session.Execute(() =>
         {
             var removed = _repository.RemoveBlock(userId, mediaId);
             if (!removed)
             {
-                // If the caller passed an Episode or Season ID whose parent Series was blocked, check parent Series.
+                // If caller passed an Episode or Season ID whose parent Series was blocked, check parent Series.
                 var item = _libraryManager.GetItemById(mediaId);
                 var parentSeriesId = item switch
                 {
@@ -296,56 +301,60 @@ public sealed class ContentBlockService : IContentBlockService
                 }
             }
 
-            if (removed && _userBlocks.TryGetValue(userId, out var dict))
+            if (removed)
             {
-                dict.Remove(mediaId);
+                session.DirectBlocks.Remove(mediaId);
+                session.ExpandedBlockedIds = null;
+                session.LastDiskWriteUtc = GetUserFileTimestamp(userId);
             }
 
-            _expandedCache.TryRemove(userId, out _);
-            UpdateLastDiskTimestampCore();
             return removed;
-        }
+        });
     }
 
     /// <inheritdoc />
     public IReadOnlyList<ContentBlockRecord> GetUserBlocks(Guid userId)
     {
-        EnsureDiskSynced();
-        if (_userBlocks.TryGetValue(userId, out var dict))
+        if (userId == Guid.Empty)
         {
-            lock (_stateLock)
-            {
-                return dict.Values.OrderByDescending(b => b.CreatedAtUtc).ToList();
-            }
+            return [];
         }
 
-        return [];
+        var session = GetOrLoadSession(userId);
+        return session.Execute(() => session.DirectBlocks.Values.OrderByDescending(b => b.CreatedAtUtc).ToList());
     }
 
     /// <inheritdoc />
     public IReadOnlySet<Guid> GetExpandedBlockedIds(Guid userId)
     {
-        if (!IsBlockingActive(userId))
+        if (userId == Guid.Empty)
         {
             return EmptyGuidSet;
         }
 
-        if (_expandedCache.TryGetValue(userId, out var cached))
+        var session = GetOrLoadSession(userId);
+        return session.Execute(() =>
         {
-            return cached;
-        }
-
-        lock (_stateLock)
-        {
-            if (!_userBlocks.TryGetValue(userId, out var directDict) || directDict.Count == 0)
+            if (!IsBlockingActiveInternal(session))
             {
                 return EmptyGuidSet;
             }
 
-            var expanded = new HashSet<Guid>(directDict.Keys);
+            if (session.ExpandedBlockedIds is not null)
+            {
+                return session.ExpandedBlockedIds;
+            }
+
+            if (session.DirectBlocks.Count == 0)
+            {
+                session.ExpandedBlockedIds = EmptyGuidSet;
+                return EmptyGuidSet;
+            }
+
+            var expanded = new HashSet<Guid>(session.DirectBlocks.Keys);
 
             // Expand descendants (Seasons & Episodes) for blocked Series/Seasons/Folders.
-            var ancestorIds = directDict.Keys.ToArray();
+            var ancestorIds = session.DirectBlocks.Keys.ToArray();
             var descendantIds = _libraryManager.GetItemIds(new InternalItemsQuery
             {
                 AncestorIds = ancestorIds,
@@ -363,9 +372,9 @@ public sealed class ContentBlockService : IContentBlockService
                 }
             }
 
-            _expandedCache[userId] = expanded;
+            session.ExpandedBlockedIds = expanded;
             return expanded;
-        }
+        });
     }
 
     /// <inheritdoc />
@@ -427,24 +436,25 @@ public sealed class ContentBlockService : IContentBlockService
             return true;
         }
 
-        if (itemId != Guid.Empty)
+        var item = _libraryManager.GetItemById(itemId);
+        if (item is not null)
         {
-            var item = _libraryManager.GetItemById(itemId);
-            if (item is Episode ep &&
-                ((ep.SeriesId != Guid.Empty && blockedIds.Contains(ep.SeriesId)) ||
-                 (ep.SeasonId != Guid.Empty && blockedIds.Contains(ep.SeasonId))))
+            if (item is Episode ep && ep.SeriesId != Guid.Empty && blockedIds.Contains(ep.SeriesId))
             {
                 return true;
             }
 
-            if (item is Season season && season.SeriesId != Guid.Empty && blockedIds.Contains(season.SeriesId))
+            if (item is Season s && s.SeriesId != Guid.Empty && blockedIds.Contains(s.SeriesId))
             {
                 return true;
             }
 
-            if (item is not null && item.ParentId != Guid.Empty && blockedIds.Contains(item.ParentId))
+            if (item.GetBaseItemKind() == BaseItemKind.BoxSet && _configProvider().HideEmptyCollections)
             {
-                return true;
+                if (IsBoxSetCompletelyBlocked(itemId, blockedIds))
+                {
+                    return true;
+                }
             }
         }
 
@@ -454,13 +464,15 @@ public sealed class ContentBlockService : IContentBlockService
     /// <inheritdoc />
     public IReadOnlyList<Guid> ProcessExpiredTimers()
     {
-        EnsureDiskSynced();
+        // Periodically evict idle sessions from RAM during the timer tick
+        EvictInactiveSessions();
+
         var now = _utcNowProvider();
         var expiredUsers = new List<Guid>();
 
-        foreach (var kvp in _userSettings)
+        // Check both cached and persisted user settings across all users
+        foreach (var settings in _repository.GetAllUserSettings())
         {
-            var settings = kvp.Value;
             if (!settings.IsBlockingEnabled &&
                 settings.DisabledUntilUtc.HasValue &&
                 settings.DisabledUntilUtc.Value <= now)
@@ -476,24 +488,96 @@ public sealed class ContentBlockService : IContentBlockService
     /// <inheritdoc />
     public void PurgeUserData(Guid userId)
     {
-        lock (_stateLock)
+        _userSessions.TryRemove(userId, out _);
+        _repository.DeleteAllUserData(userId);
+    }
+
+    private UserSessionState GetOrLoadSession(Guid userId)
+    {
+        var session = _userSessions.GetOrAdd(userId, static id => new UserSessionState(id));
+
+        return session.Execute(() =>
         {
-            _repository.DeleteAllUserData(userId);
-            _userBlocks.TryRemove(userId, out _);
-            _userSettings.TryRemove(userId, out _);
-            _expandedCache.TryRemove(userId, out _);
-            UpdateLastDiskTimestampCore();
+            var currentWriteUtc = GetUserFileTimestamp(userId);
+
+            if (!session.IsLoaded || currentWriteUtc != session.LastDiskWriteUtc)
+            {
+                var blocks = _repository.GetUserBlocks(userId);
+                var settings = _repository.GetUserSettings(userId) ??
+                               new UserBlockSettings(userId, true, null, null, _utcNowProvider());
+
+                session.DirectBlocks = blocks.ToDictionary(b => b.MediaId);
+                session.Settings = settings;
+                session.ExpandedBlockedIds = null;
+                session.LastDiskWriteUtc = currentWriteUtc;
+                session.IsLoaded = true;
+            }
+
+            session.LastAccessedUtc = _utcNowProvider();
+            return session;
+        });
+    }
+
+    private DateTime GetUserFileTimestamp(Guid userId)
+    {
+        var path = Path.Combine(_repository.DatabaseFilePath, $"{userId:D}.json");
+        return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+    }
+
+    private bool IsBlockingActiveInternal(UserSessionState session)
+    {
+        var settings = session.Settings;
+        if (settings.IsBlockingEnabled)
+        {
+            return true;
         }
+
+        var now = _utcNowProvider();
+        if (settings.DisabledUntilUtc.HasValue && settings.DisabledUntilUtc.Value <= now)
+        {
+            SetBlockingEnabledInternal(session, true, null);
+            return true;
+        }
+
+        return false;
+    }
+
+    private UserBlockSettings SetBlockingEnabledInternal(UserSessionState session, bool enabled, int? pauseDurationMinutes)
+    {
+        var now = _utcNowProvider();
+        var existing = session.Settings;
+        DateTime? disabledUntil = null;
+
+        if (!enabled)
+        {
+            var effectiveMinutes = pauseDurationMinutes ?? _configProvider().DefaultPauseDurationMinutes;
+            if (effectiveMinutes > 0)
+            {
+                disabledUntil = now.AddMinutes(effectiveMinutes);
+            }
+        }
+
+        var updated = new UserBlockSettings(
+            session.UserId,
+            enabled,
+            disabledUntil,
+            existing.MagicPlaylistId,
+            now);
+
+        _repository.UpsertUserSettings(updated);
+        session.Settings = updated;
+        session.LastDiskWriteUtc = GetUserFileTimestamp(session.UserId);
+        return updated;
     }
 
     private bool IsBoxSetCompletelyBlocked(Guid boxSetId, IReadOnlySet<Guid> blockedIds)
     {
-        if (_libraryManager.GetItemById(boxSetId) is not BoxSet boxSet)
+        var children = _libraryManager.GetItemList(new InternalItemsQuery
         {
-            return false;
-        }
+            ParentId = boxSetId,
+            Recursive = true
+        });
 
-        var children = boxSet.GetLinkedChildren();
         if (children is null || children.Count == 0)
         {
             return false;
@@ -517,28 +601,44 @@ public sealed class ContentBlockService : IContentBlockService
         return hasAnyChild;
     }
 
-    private void EnsureDiskSynced()
+    private sealed class UserSessionState
     {
-        var path = _repository.DatabaseFilePath;
-        if (!File.Exists(path))
+        private readonly Lock _gate = new();
+
+        public UserSessionState(Guid userId)
         {
-            ReloadFromDisk();
-            return;
+            UserId = userId;
+            Settings = new UserBlockSettings(userId, true, null, null, DateTime.UtcNow);
         }
 
-        var currentWriteUtc = File.GetLastWriteTimeUtc(path);
-        if (currentWriteUtc != _lastKnownDiskWriteUtc)
-        {
-            ReloadFromDisk();
-        }
-    }
+        public Guid UserId { get; }
 
-    private void UpdateLastDiskTimestampCore()
-    {
-        var path = _repository.DatabaseFilePath;
-        if (File.Exists(path))
+        public bool IsLoaded { get; set; }
+
+        public Dictionary<Guid, ContentBlockRecord> DirectBlocks { get; set; } = [];
+
+        public UserBlockSettings Settings { get; set; }
+
+        public HashSet<Guid>? ExpandedBlockedIds { get; set; }
+
+        public DateTime LastAccessedUtc { get; set; }
+
+        public DateTime LastDiskWriteUtc { get; set; }
+
+        public T Execute<T>(Func<T> action)
         {
-            _lastKnownDiskWriteUtc = File.GetLastWriteTimeUtc(path);
+            lock (_gate)
+            {
+                return action();
+            }
+        }
+
+        public void Execute(Action action)
+        {
+            lock (_gate)
+            {
+                action();
+            }
         }
     }
 }

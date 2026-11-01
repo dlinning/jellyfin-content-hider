@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -9,8 +11,9 @@ using MediaBrowser.Common.Configuration;
 namespace Jellyfin.Plugin.ContentHider.Data;
 
 /// <summary>
-/// Standalone on-disk JSON repository for persisting per-user content blocks and toggle states.
-/// Completely self-contained with zero third-party database dependencies.
+/// Standalone on-disk JSON repository that persists each user's content blocks and settings
+/// into an isolated, per-user file (<c>users/{userId}.json</c>).
+/// Eliminates multi-user lock contention and allows inactive users to be dropped from RAM.
 /// </summary>
 public sealed class JsonContentBlockRepository : IContentBlockRepository
 {
@@ -21,13 +24,10 @@ public sealed class JsonContentBlockRepository : IContentBlockRepository
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly object _syncLock = new();
     private readonly Func<string> _pathResolver;
-    private readonly Dictionary<Guid, Dictionary<Guid, ContentBlockRecord>> _blocks = new();
-    private readonly Dictionary<Guid, UserBlockSettings> _settings = new();
-
-    private string? _cachedPath;
-    private DateTime _lastReadWriteUtc = DateTime.MinValue;
+    private readonly ConcurrentDictionary<Guid, object> _userFileLocks = new();
+    private readonly object _globalInitLock = new();
+    private bool _isInitialized;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="JsonContentBlockRepository"/> class for DI.
@@ -43,29 +43,53 @@ public sealed class JsonContentBlockRepository : IContentBlockRepository
                 return plugin.DatabaseFilePath;
             }
 
-            return Path.Combine(applicationPaths.PluginConfigurationsPath, "Jellyfin.Plugin.ContentHider", "content_blocks.json");
+            return Path.Combine(applicationPaths.PluginConfigurationsPath, "Jellyfin.Plugin.ContentHider", "users");
         };
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="JsonContentBlockRepository"/> class with an explicit file path.
+    /// Initializes a new instance of the <see cref="JsonContentBlockRepository"/> class with an explicit directory path.
     /// </summary>
-    /// <param name="databaseFilePath">The explicit file path for the on-disk storage file.</param>
-    public JsonContentBlockRepository(string databaseFilePath)
+    /// <param name="storageDirectoryPath">The directory path where per-user JSON files are stored.</param>
+    public JsonContentBlockRepository(string storageDirectoryPath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseFilePath);
-        _pathResolver = () => databaseFilePath;
+        ArgumentException.ThrowIfNullOrWhiteSpace(storageDirectoryPath);
+        _pathResolver = () => storageDirectoryPath;
     }
 
     /// <inheritdoc />
     public string DatabaseFilePath => Path.GetFullPath(_pathResolver());
 
+    /// <summary>
+    /// Gets the absolute path on disk for the specified user's JSON configuration file.
+    /// </summary>
+    /// <param name="userId">The Jellyfin user ID.</param>
+    /// <returns>The path to <c>{userId}.json</c>.</returns>
+    public string GetUserFilePath(Guid userId)
+    {
+        return Path.Combine(DatabaseFilePath, $"{userId:D}.json");
+    }
+
     /// <inheritdoc />
     public void EnsureInitialized()
     {
-        lock (_syncLock)
+        lock (_globalInitLock)
         {
-            EnsureLoadedCore();
+            if (_isInitialized)
+            {
+                return;
+            }
+
+            var dir = DatabaseFilePath;
+            if (!Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            // Auto-migrate from legacy single content_blocks.json if it exists
+            MigrateLegacySingleFileIfPresent(dir);
+
+            _isInitialized = true;
         }
     }
 
@@ -73,43 +97,52 @@ public sealed class JsonContentBlockRepository : IContentBlockRepository
     public void UpsertBlock(ContentBlockRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
+        EnsureInitialized();
 
-        lock (_syncLock)
+        var lockObj = _userFileLocks.GetOrAdd(record.UserId, static _ => new object());
+        lock (lockObj)
         {
-            EnsureLoadedCore();
+            var model = LoadUserModelCore(record.UserId);
 
-            if (!_blocks.TryGetValue(record.UserId, out var userMap))
-            {
-                userMap = new Dictionary<Guid, ContentBlockRecord>();
-                _blocks[record.UserId] = userMap;
-            }
-
+            var existingIndex = model.Blocks.FindIndex(b => b.MediaId == record.MediaId);
             var mediaName = !string.IsNullOrWhiteSpace(record.MediaName)
                 ? record.MediaName
-                : (userMap.TryGetValue(record.MediaId, out var existing) ? existing.MediaName : string.Empty);
+                : (existingIndex >= 0 ? model.Blocks[existingIndex].MediaName : string.Empty);
 
             var toStore = record with { MediaName = mediaName };
-            userMap[record.MediaId] = toStore;
 
-            SaveCore();
+            if (existingIndex >= 0)
+            {
+                model.Blocks[existingIndex] = toStore;
+            }
+            else
+            {
+                model.Blocks.Add(toStore);
+            }
+
+            SaveUserModelCore(model);
         }
     }
 
     /// <inheritdoc />
     public bool RemoveBlock(Guid userId, Guid mediaId)
     {
-        lock (_syncLock)
+        EnsureInitialized();
+
+        var lockObj = _userFileLocks.GetOrAdd(userId, static _ => new object());
+        lock (lockObj)
         {
-            EnsureLoadedCore();
-
-            if (_blocks.TryGetValue(userId, out var userMap) && userMap.Remove(mediaId))
+            var filePath = GetUserFilePath(userId);
+            if (!File.Exists(filePath))
             {
-                if (userMap.Count == 0)
-                {
-                    _blocks.Remove(userId);
-                }
+                return false;
+            }
 
-                SaveCore();
+            var model = LoadUserModelCore(userId);
+            var removedCount = model.Blocks.RemoveAll(b => b.MediaId == mediaId);
+            if (removedCount > 0)
+            {
+                SaveUserModelCore(model);
                 return true;
             }
 
@@ -120,171 +153,175 @@ public sealed class JsonContentBlockRepository : IContentBlockRepository
     /// <inheritdoc />
     public IReadOnlyList<ContentBlockRecord> GetUserBlocks(Guid userId)
     {
-        lock (_syncLock)
+        EnsureInitialized();
+
+        var lockObj = _userFileLocks.GetOrAdd(userId, static _ => new object());
+        lock (lockObj)
         {
-            EnsureLoadedCore();
-
-            if (_blocks.TryGetValue(userId, out var userMap))
-            {
-                return userMap.Values
-                    .OrderByDescending(b => b.CreatedAtUtc)
-                    .ToList();
-            }
-
-            return [];
-        }
-    }
-
-    /// <inheritdoc />
-    public IReadOnlyList<ContentBlockRecord> GetAllBlocks()
-    {
-        lock (_syncLock)
-        {
-            EnsureLoadedCore();
-
-            return _blocks.Values
-                .SelectMany(userMap => userMap.Values)
+            var model = LoadUserModelCore(userId);
+            return model.Blocks
                 .OrderByDescending(b => b.CreatedAtUtc)
                 .ToList();
         }
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<ContentBlockRecord> GetAllBlocks()
+    {
+        EnsureInitialized();
+
+        var results = new List<ContentBlockRecord>();
+        var userFiles = GetUserFilesSafe();
+
+        foreach (var file in userFiles)
+        {
+            if (TryParseUserIdFromFileName(file, out var userId))
+            {
+                var lockObj = _userFileLocks.GetOrAdd(userId, static _ => new object());
+                lock (lockObj)
+                {
+                    var model = LoadUserModelFromFile(file, userId);
+                    results.AddRange(model.Blocks);
+                }
+            }
+        }
+
+        return results.OrderByDescending(b => b.CreatedAtUtc).ToList();
+    }
+
+    /// <inheritdoc />
     public UserBlockSettings? GetUserSettings(Guid userId)
     {
-        lock (_syncLock)
-        {
-            EnsureLoadedCore();
+        EnsureInitialized();
 
-            return _settings.TryGetValue(userId, out var settings) ? settings : null;
+        var lockObj = _userFileLocks.GetOrAdd(userId, static _ => new object());
+        lock (lockObj)
+        {
+            var model = LoadUserModelCore(userId);
+            return model.Settings;
         }
     }
 
     /// <inheritdoc />
     public IReadOnlyList<UserBlockSettings> GetAllUserSettings()
     {
-        lock (_syncLock)
-        {
-            EnsureLoadedCore();
+        EnsureInitialized();
 
-            return _settings.Values.ToList();
+        var results = new List<UserBlockSettings>();
+        var userFiles = GetUserFilesSafe();
+
+        foreach (var file in userFiles)
+        {
+            if (TryParseUserIdFromFileName(file, out var userId))
+            {
+                var lockObj = _userFileLocks.GetOrAdd(userId, static _ => new object());
+                lock (lockObj)
+                {
+                    var model = LoadUserModelFromFile(file, userId);
+                    if (model.Settings is not null)
+                    {
+                        results.Add(model.Settings);
+                    }
+                }
+            }
         }
+
+        return results;
     }
 
     /// <inheritdoc />
     public void UpsertUserSettings(UserBlockSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        EnsureInitialized();
 
-        lock (_syncLock)
+        var lockObj = _userFileLocks.GetOrAdd(settings.UserId, static _ => new object());
+        lock (lockObj)
         {
-            EnsureLoadedCore();
+            var model = LoadUserModelCore(settings.UserId);
 
-            var magicPlaylistId = settings.MagicPlaylistId;
-            if (magicPlaylistId is null && _settings.TryGetValue(settings.UserId, out var existing))
-            {
-                magicPlaylistId = existing.MagicPlaylistId;
-            }
-
+            var magicPlaylistId = settings.MagicPlaylistId ?? model.Settings?.MagicPlaylistId;
             var toStore = settings with { MagicPlaylistId = magicPlaylistId };
-            _settings[settings.UserId] = toStore;
 
-            SaveCore();
+            model.Settings = toStore;
+            SaveUserModelCore(model);
         }
     }
 
     /// <inheritdoc />
     public int DeleteAllUserData(Guid userId)
     {
-        lock (_syncLock)
+        EnsureInitialized();
+
+        var lockObj = _userFileLocks.GetOrAdd(userId, static _ => new object());
+        lock (lockObj)
         {
-            EnsureLoadedCore();
-
-            var deleted = 0;
-            if (_blocks.TryGetValue(userId, out var userMap))
+            var filePath = GetUserFilePath(userId);
+            if (!File.Exists(filePath))
             {
-                deleted += userMap.Count;
-                _blocks.Remove(userId);
+                return 0;
             }
 
-            if (_settings.Remove(userId))
+            var model = LoadUserModelCore(userId);
+            var deletedCount = model.Blocks.Count + (model.Settings is not null ? 1 : 0);
+
+            try
             {
-                deleted++;
+                File.Delete(filePath);
+            }
+            catch (IOException)
+            {
+                // In case of transient IO lock, clear content
+                model.Blocks.Clear();
+                model.Settings = null;
+                SaveUserModelCore(model);
             }
 
-            if (deleted > 0)
-            {
-                SaveCore();
-            }
-
-            return deleted;
+            _userFileLocks.TryRemove(userId, out _);
+            return deletedCount;
         }
     }
 
     /// <inheritdoc />
     public int DeleteMediaBlocks(Guid mediaId)
     {
-        lock (_syncLock)
+        EnsureInitialized();
+
+        var totalDeleted = 0;
+        var userFiles = GetUserFilesSafe();
+
+        foreach (var file in userFiles)
         {
-            EnsureLoadedCore();
-
-            var deleted = 0;
-            var emptyUsers = new List<Guid>();
-
-            foreach (var (userId, userMap) in _blocks)
+            if (TryParseUserIdFromFileName(file, out var userId))
             {
-                if (userMap.Remove(mediaId))
+                var lockObj = _userFileLocks.GetOrAdd(userId, static _ => new object());
+                lock (lockObj)
                 {
-                    deleted++;
-                    if (userMap.Count == 0)
+                    var model = LoadUserModelFromFile(file, userId);
+                    var removed = model.Blocks.RemoveAll(b => b.MediaId == mediaId);
+                    if (removed > 0)
                     {
-                        emptyUsers.Add(userId);
+                        totalDeleted += removed;
+                        SaveUserModelCore(model);
                     }
                 }
             }
-
-            foreach (var userId in emptyUsers)
-            {
-                _blocks.Remove(userId);
-            }
-
-            if (deleted > 0)
-            {
-                SaveCore();
-            }
-
-            return deleted;
         }
+
+        return totalDeleted;
     }
 
-    private void EnsureLoadedCore()
+    private UserStorageModel LoadUserModelCore(Guid userId)
     {
-        var filePath = DatabaseFilePath;
-
-        // If path changed or file modified externally, reload
-        if (!string.Equals(_cachedPath, filePath, StringComparison.Ordinal) ||
-            (File.Exists(filePath) && File.GetLastWriteTimeUtc(filePath) != _lastReadWriteUtc))
-        {
-            LoadCore(filePath);
-        }
+        var filePath = GetUserFilePath(userId);
+        return LoadUserModelFromFile(filePath, userId);
     }
 
-    private void LoadCore(string filePath)
+    private static UserStorageModel LoadUserModelFromFile(string filePath, Guid userId)
     {
-        _cachedPath = filePath;
-        _blocks.Clear();
-        _settings.Clear();
-
         if (!File.Exists(filePath))
         {
-            var parentDir = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
-            {
-                Directory.CreateDirectory(parentDir);
-            }
-
-            SaveCore();
-            return;
+            return new UserStorageModel { UserId = userId };
         }
 
         try
@@ -292,83 +329,144 @@ public sealed class JsonContentBlockRepository : IContentBlockRepository
             var json = File.ReadAllText(filePath);
             if (!string.IsNullOrWhiteSpace(json))
             {
-                var model = JsonSerializer.Deserialize<JsonStorageModel>(json, JsonOptions);
+                var model = JsonSerializer.Deserialize<UserStorageModel>(json, JsonOptions);
                 if (model is not null)
                 {
-                    if (model.Blocks is not null)
+                    model.UserId = userId;
+                    model.Blocks ??= [];
+                    return model;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Corrupt file fallback
+        }
+        catch (IOException)
+        {
+            // Transient IO read fallback
+        }
+
+        return new UserStorageModel { UserId = userId };
+    }
+
+    private void SaveUserModelCore(UserStorageModel model)
+    {
+        var filePath = GetUserFilePath(model.UserId);
+        var dir = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+
+        var json = JsonSerializer.Serialize(model, JsonOptions);
+        var tempFile = Path.Combine(dir ?? ".", $"{model.UserId:D}.{Guid.NewGuid():N}.tmp");
+
+        File.WriteAllText(tempFile, json);
+        File.Move(tempFile, filePath, overwrite: true);
+    }
+
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Filesystem enumeration failures should return empty list rather than crashing.")]
+    private string[] GetUserFilesSafe()
+    {
+        var dir = DatabaseFilePath;
+        if (!Directory.Exists(dir))
+        {
+            return [];
+        }
+
+        try
+        {
+            return Directory.GetFiles(dir, "*.json", SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception)
+        {
+            return [];
+        }
+    }
+
+    private static bool TryParseUserIdFromFileName(string filePath, out Guid userId)
+    {
+        var fileNameWithoutExt = Path.GetFileNameWithoutExtension(filePath);
+        return Guid.TryParse(fileNameWithoutExt, out userId);
+    }
+
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Best-effort legacy migration.")]
+    private void MigrateLegacySingleFileIfPresent(string usersDir)
+    {
+        var parentDir = Path.GetDirectoryName(usersDir);
+        if (string.IsNullOrEmpty(parentDir))
+        {
+            return;
+        }
+
+        var legacyFile = Path.Combine(parentDir, "content_blocks.json");
+        if (!File.Exists(legacyFile))
+        {
+            return;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(legacyFile);
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                var legacy = JsonSerializer.Deserialize<LegacyStorageModel>(json, JsonOptions);
+                if (legacy is not null)
+                {
+                    var blocksByUser = (legacy.Blocks ?? [])
+                        .Where(b => b is not null && b.UserId != Guid.Empty)
+                        .GroupBy(b => b.UserId)
+                        .ToList();
+
+                    var settingsByUser = (legacy.Settings ?? [])
+                        .Where(s => s is not null && s.UserId != Guid.Empty)
+                        .ToDictionary(s => s.UserId);
+
+                    var allUserIds = new HashSet<Guid>(blocksByUser.Select(g => g.Key));
+                    allUserIds.UnionWith(settingsByUser.Keys);
+
+                    foreach (var userId in allUserIds)
                     {
-                        foreach (var record in model.Blocks)
+                        var userModel = new UserStorageModel
                         {
-                            if (record is null || record.UserId == Guid.Empty || record.MediaId == Guid.Empty)
-                            {
-                                continue;
-                            }
+                            Version = 1,
+                            UserId = userId,
+                            Settings = settingsByUser.GetValueOrDefault(userId),
+                            Blocks = blocksByUser.FirstOrDefault(g => g.Key == userId)?.ToList() ?? []
+                        };
 
-                            if (!_blocks.TryGetValue(record.UserId, out var userMap))
-                            {
-                                userMap = new Dictionary<Guid, ContentBlockRecord>();
-                                _blocks[record.UserId] = userMap;
-                            }
-
-                            userMap[record.MediaId] = record;
-                        }
-                    }
-
-                    if (model.Settings is not null)
-                    {
-                        foreach (var setting in model.Settings)
-                        {
-                            if (setting is null || setting.UserId == Guid.Empty)
-                            {
-                                continue;
-                            }
-
-                            _settings[setting.UserId] = setting;
-                        }
+                        SaveUserModelCore(userModel);
                     }
                 }
             }
 
-            _lastReadWriteUtc = File.GetLastWriteTimeUtc(filePath);
+            File.Move(legacyFile, $"{legacyFile}.migrated", overwrite: true);
         }
-        catch (JsonException)
+        catch (Exception)
         {
-            // Corrupt file fallback: keep maps initialized and avoid crashing
-            _lastReadWriteUtc = File.GetLastWriteTimeUtc(filePath);
+            // Non-critical migration failure
         }
     }
 
-    private void SaveCore()
-    {
-        var filePath = DatabaseFilePath;
-        var parentDir = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
-        {
-            Directory.CreateDirectory(parentDir);
-        }
-
-        var model = new JsonStorageModel
-        {
-            Version = 1,
-            Blocks = _blocks.Values.SelectMany(u => u.Values).OrderByDescending(b => b.CreatedAtUtc).ToList(),
-            Settings = _settings.Values.ToList()
-        };
-
-        var json = JsonSerializer.Serialize(model, JsonOptions);
-        var tempFile = Path.Combine(parentDir ?? ".", $"{Path.GetFileName(filePath)}.{Guid.NewGuid():N}.tmp");
-
-        File.WriteAllText(tempFile, json);
-        File.Move(tempFile, filePath, overwrite: true);
-
-        _lastReadWriteUtc = File.GetLastWriteTimeUtc(filePath);
-    }
-
-    private sealed class JsonStorageModel
+    private sealed class UserStorageModel
     {
         public int Version { get; set; } = 1;
 
-        public List<ContentBlockRecord> Blocks { get; set; } = [];
+        public Guid UserId { get; set; }
 
-        public List<UserBlockSettings> Settings { get; set; } = [];
+        public UserBlockSettings? Settings { get; set; }
+
+        public List<ContentBlockRecord> Blocks { get; set; } = [];
+    }
+
+    [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via System.Text.Json deserialization")]
+    private sealed class LegacyStorageModel
+    {
+        public int Version { get; set; } = 1;
+
+        public List<ContentBlockRecord>? Blocks { get; set; }
+
+        public List<UserBlockSettings>? Settings { get; set; }
     }
 }
