@@ -82,9 +82,9 @@
 
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'button-flat detailButton emby-button chDetailHideBtn';
-        btn.title = 'Hide from My View';
-        btn.innerHTML = '<div class="detailButton-content"><span class="material-icons visibility_off detailButton-icon" aria-hidden="true"></span><span>Hide</span></div>';
+        btn.className = 'button-flat detailButton button-flat btnMoreCommands detailButton emby-buttonn';
+        btn.title = 'Hide Content for Me';
+        btn.innerHTML = '<div class="detailButton-content"><span class="material-icons visibility_off detailButton-icon" aria-hidden="true"></span></div>';
 
         btn.addEventListener('click', function () {
             api('ContentHider/Api/Blocks/' + encodeURIComponent(itemId), { method: 'POST' })
