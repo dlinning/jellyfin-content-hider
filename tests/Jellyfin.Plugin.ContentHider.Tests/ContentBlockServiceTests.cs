@@ -1,88 +1,90 @@
 using System;
-using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.ContentHider.Configuration;
-using Jellyfin.Plugin.ContentHider.Data;
 using Jellyfin.Plugin.ContentHider.Services;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Search;
 using Moq;
 using Xunit;
 
 namespace Jellyfin.Plugin.ContentHider.Tests;
 
-public sealed class ContentBlockServiceTests : IDisposable
+public sealed class ContentBlockServiceTests
 {
-    private readonly string _tempDir;
-    private readonly string _storagePath;
-    private readonly JsonContentBlockRepository _repository;
+    private readonly Mock<IPlaylistManager> _playlistManagerMock;
     private readonly Mock<ILibraryManager> _libraryManagerMock;
+    private readonly Mock<IUserManager> _userManagerMock;
+    private readonly Mock<IUserDataManager> _userDataManagerMock;
     private readonly PluginConfiguration _config;
     private DateTime _currentUtc;
 
     public ContentBlockServiceTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), "ContentHiderSvcTests_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        _storagePath = Path.Combine(_tempDir, "users");
-        _repository = new JsonContentBlockRepository(_storagePath);
+        _playlistManagerMock = new Mock<IPlaylistManager>();
         _libraryManagerMock = new Mock<ILibraryManager>();
+        _userManagerMock = new Mock<IUserManager>();
+        _userDataManagerMock = new Mock<IUserDataManager>();
         _config = new PluginConfiguration
         {
             DefaultPauseDurationMinutes = 60,
-            NormalizeEpisodesToSeries = true,
             HideEmptyCollections = true
         };
         _currentUtc = new DateTime(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_tempDir))
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-    }
-
     [Fact]
-    public void ToggleBlocking_SupportsManualAndTimedAutoReenable_AndPersistsToDisk()
+    public async Task ToggleBlocking_SyncsWithPlaylistFavoriteState_AndSupportsTimedAutoReenable()
     {
         var service = CreateService();
         var userId = Guid.NewGuid();
+        var playlistId = Guid.NewGuid();
         var movieId = Guid.NewGuid();
 
-        service.AddBlock(userId, movieId);
+        var user = new User("doug", "DefaultAuth", "DefaultReset") { Id = userId };
+        var playlist = new Playlist
+        {
+            Id = playlistId,
+            OwnerUserId = userId,
+            Name = "[doug: Hide Content]",
+            Tags = [MagicPlaylistService.ManagedPlaylistTag]
+        };
+        var userData = new UserItemData { Key = playlistId.ToString("N"), IsFavorite = false };
+        var movie = new Movie { Id = movieId, Name = "Inception" };
+
+        _userManagerMock.Setup(u => u.GetUserById(userId)).Returns(user);
+        _playlistManagerMock.Setup(p => p.GetPlaylists(userId)).Returns([playlist]);
+        _playlistManagerMock.Setup(p => p.GetPlaylistForUser(playlistId, userId)).Returns(playlist);
+        _userDataManagerMock.Setup(d => d.GetUserData(user, playlist)).Returns(userData);
+        _libraryManagerMock.Setup(m => m.GetItemById(movieId)).Returns(movie);
+
+        Assert.True(await service.TryAddBlockAsync(userId, movieId));
         Assert.True(service.IsBlockingActive(userId));
         Assert.Contains(movieId, service.GetExpandedBlockedIds(userId));
 
-        // 1. Timed pause for 60 minutes.
+        // 1. Timed pause for 60 minutes sets IsFavorite = true on the playlist's UserItemData.
         service.SetBlockingEnabled(userId, false, 60);
+        Assert.True(userData.IsFavorite);
         Assert.False(service.IsBlockingActive(userId));
         Assert.Empty(service.GetExpandedBlockedIds(userId));
-
-        // Verify persisted to storage on disk.
-        var diskSettings = _repository.GetUserSettings(userId);
-        Assert.NotNull(diskSettings);
-        Assert.False(diskSettings.IsBlockingEnabled);
-        Assert.Equal(_currentUtc.AddMinutes(60), diskSettings.DisabledUntilUtc);
 
         // Advance clock by 59 minutes -> still paused.
         _currentUtc = _currentUtc.AddMinutes(59);
         Assert.False(service.IsBlockingActive(userId));
 
-        // Advance clock by 2 more minutes -> auto-reenables and persists back to disk!
+        // Advance clock by 2 more minutes -> auto-reenables and clears IsFavorite!
         _currentUtc = _currentUtc.AddMinutes(2);
         Assert.True(service.IsBlockingActive(userId));
+        Assert.False(userData.IsFavorite);
         Assert.Contains(movieId, service.GetExpandedBlockedIds(userId));
-
-        var reenabledOnDisk = _repository.GetUserSettings(userId);
-        Assert.NotNull(reenabledOnDisk);
-        Assert.True(reenabledOnDisk.IsBlockingEnabled);
-        Assert.Null(reenabledOnDisk.DisabledUntilUtc);
 
         // 2. Manual toggle off (0 minutes) -> stays off indefinitely until manually re-enabled.
         service.SetBlockingEnabled(userId, false, 0);
@@ -91,39 +93,70 @@ public sealed class ContentBlockServiceTests : IDisposable
 
         service.SetBlockingEnabled(userId, true);
         Assert.True(service.IsBlockingActive(userId));
+        Assert.False(userData.IsFavorite);
     }
 
     [Fact]
-    public void AddBlock_NormalizesEpisodeToParentSeries_AndExpandsDescendants()
+    public async Task TryAddBlockAsync_AllowsSeriesAndMovies_ExpandsDescendants_AndRejectsEpisodes()
     {
         var userId = Guid.NewGuid();
+        var playlistId = Guid.NewGuid();
         var seriesId = Guid.NewGuid();
         var seasonId = Guid.NewGuid();
         var episodeId = Guid.NewGuid();
+        var otherSeriesId = Guid.NewGuid();
+        var otherEpisodeId = Guid.NewGuid();
+
+        var playlist = new Playlist
+        {
+            Id = playlistId,
+            OwnerUserId = userId,
+            Name = "[doug: Hide Content]",
+            Tags = [MagicPlaylistService.ManagedPlaylistTag]
+        };
 
         var series = new Series { Id = seriesId, Name = "The Bear" };
         var episode = new Episode { Id = episodeId, SeriesId = seriesId, SeasonId = seasonId, Name = "Pilot" };
+        var otherEpisode = new Episode { Id = otherEpisodeId, SeriesId = otherSeriesId, Name = "Other Episode" };
 
-        _libraryManagerMock.Setup(m => m.GetItemById(episodeId)).Returns(episode);
+        _playlistManagerMock.Setup(p => p.GetPlaylists(userId)).Returns([playlist]);
+        _playlistManagerMock.Setup(p => p.GetPlaylistForUser(playlistId, userId)).Returns(playlist);
         _libraryManagerMock.Setup(m => m.GetItemById(seriesId)).Returns(series);
+        _libraryManagerMock.Setup(m => m.GetItemById(episodeId)).Returns(episode);
+        _libraryManagerMock.Setup(m => m.GetItemById(otherEpisodeId)).Returns(otherEpisode);
         _libraryManagerMock
             .Setup(m => m.GetItemIds(It.IsAny<InternalItemsQuery>()))
             .Returns([seasonId, episodeId]);
 
         var service = CreateService();
 
-        // Blocking the episode normalizes to the parent Series on disk.
-        var record = service.AddBlock(userId, episodeId);
-        Assert.Equal(seriesId, record.MediaId);
-        Assert.Equal("The Bear", record.MediaName);
-        Assert.Equal(nameof(BaseItemKind.Series), record.MediaType);
+        // 1. Attempting to block a single episode is rejected and does NOT hide its parent series.
+        var episodeAdded = await service.TryAddBlockAsync(userId, otherEpisodeId);
+        Assert.False(episodeAdded);
+        Assert.Empty(playlist.LinkedChildren ?? []);
+        Assert.DoesNotContain(otherSeriesId, service.GetExpandedBlockedIds(userId));
+
+        // Even if a single episode were manually present in LinkedChildren, it must NOT hide the series.
+        playlist.LinkedChildren =
+        [
+            new LinkedChild { ItemId = otherEpisodeId, Type = MediaBrowser.Controller.Entities.LinkedChildType.Manual }
+        ];
+        Assert.DoesNotContain(otherSeriesId, service.GetExpandedBlockedIds(userId));
+        Assert.DoesNotContain(otherEpisodeId, service.GetExpandedBlockedIds(userId));
+
+        // 2. Blocking a Series succeeds and expands downward to its child Seasons and Episodes.
+        playlist.LinkedChildren = [];
+        var seriesAdded = await service.TryAddBlockAsync(userId, seriesId);
+        Assert.True(seriesAdded);
+        Assert.Single(playlist.LinkedChildren);
+        Assert.Equal(seriesId, playlist.LinkedChildren[0].ItemId);
 
         var expanded = service.GetExpandedBlockedIds(userId);
         Assert.Contains(seriesId, expanded);
         Assert.Contains(seasonId, expanded);
         Assert.Contains(episodeId, expanded);
 
-        // DTO and SearchHint checks for child episode also return true.
+        // DTO and SearchHint checks for child episode of the blocked series return true.
         var episodeDto = new BaseItemDto { Id = Guid.NewGuid(), SeriesId = seriesId, Type = BaseItemKind.Episode };
         Assert.True(service.IsDtoBlocked(userId, episodeDto, expanded));
 
@@ -132,52 +165,49 @@ public sealed class ContentBlockServiceTests : IDisposable
     }
 
     [Fact]
-    public void ExternalStorageModificationOnDisk_IsDetectedAndReloadedAutomatically()
+    public async Task TagBasedPlaylistResolution_FindsManagedPlaylistEvenWhenRenamed()
     {
         var service = CreateService();
         var userId = Guid.NewGuid();
-        var externalMovieId = Guid.NewGuid();
-
-        Assert.Empty(service.GetUserBlocks(userId));
-
-        // Simulate an external write to the on-disk user .json file and bump last-write timestamp.
-        var externalRepo = new JsonContentBlockRepository(_storagePath);
-        externalRepo.UpsertBlock(new ContentBlockRecord(userId, externalMovieId, "Movie", "Added Externally", _currentUtc));
-
-        var userFile = Path.Combine(_storagePath, $"{userId:D}.json");
-        File.SetLastWriteTimeUtc(userFile, DateTime.UtcNow.AddSeconds(5));
-
-        var blocks = service.GetUserBlocks(userId);
-        Assert.Single(blocks);
-        Assert.Equal(externalMovieId, blocks[0].MediaId);
-    }
-
-    [Fact]
-    public void InactiveUserSessions_AreEvictedFromMemory_AndReloadedLazily()
-    {
-        var service = CreateService();
-        var userId = Guid.NewGuid();
+        var regularPlaylistId = Guid.NewGuid();
+        var managedPlaylistId = Guid.NewGuid();
         var movieId = Guid.NewGuid();
 
-        service.AddBlock(userId, movieId);
-        Assert.Single(service.GetUserBlocks(userId));
+        var regularPlaylist = new Playlist
+        {
+            Id = regularPlaylistId,
+            OwnerUserId = userId,
+            Name = "[doug: Hide Content]",
+            Tags = []
+        };
+        var managedPlaylist = new Playlist
+        {
+            Id = managedPlaylistId,
+            OwnerUserId = userId,
+            Name = "My Custom Renamed Hidden List",
+            Tags = [MagicPlaylistService.ManagedPlaylistTag]
+        };
+        var movie = new Movie { Id = movieId, Name = "Arrival" };
 
-        // Evict sessions inactive for >= 10 minutes (simulate advancing clock)
-        _currentUtc = _currentUtc.AddMinutes(45);
-        var evicted = service.EvictInactiveSessions(TimeSpan.FromMinutes(30));
-        Assert.Equal(1, evicted);
+        _playlistManagerMock.Setup(p => p.GetPlaylists(userId)).Returns([regularPlaylist, managedPlaylist]);
+        _playlistManagerMock.Setup(p => p.GetPlaylistForUser(managedPlaylistId, userId)).Returns(managedPlaylist);
+        _libraryManagerMock.Setup(m => m.GetItemById(movieId)).Returns(movie);
 
-        // When user makes a request again, lazily reloads from disk
-        var blocksAfterEvict = service.GetUserBlocks(userId);
-        Assert.Single(blocksAfterEvict);
-        Assert.Equal(movieId, blocksAfterEvict[0].MediaId);
+        Assert.Equal(managedPlaylistId, service.GetMagicPlaylistId(userId));
+
+        Assert.True(await service.TryAddBlockAsync(userId, movieId));
+        var blockedItems = service.GetBlockedItems(userId);
+        Assert.Single(blockedItems);
+        Assert.Equal(movieId, blockedItems[0].Id);
     }
 
     private ContentBlockService CreateService()
     {
         return new ContentBlockService(
-            _repository,
+            _playlistManagerMock.Object,
             _libraryManagerMock.Object,
+            _userManagerMock.Object,
+            _userDataManagerMock.Object,
             () => _config,
             () => _currentUtc);
     }

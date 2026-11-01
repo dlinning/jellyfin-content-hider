@@ -5,16 +5,16 @@ using System.Threading.Tasks;
 namespace Jellyfin.Plugin.ContentHider.Services;
 
 /// <summary>
-/// Manages per-user Magic Playlists (<c>[Hide Content]</c>) and synchronizes their Favorite badge with blocking state.
+/// Manages per-user Magic Playlists (tagged with <c>__is_content_hider_playlist</c>) and synchronizes their Favorite badge with blocking state.
 /// </summary>
 public interface IMagicPlaylistService
 {
     /// <summary>
-    /// Ensures a private Magic Playlist exists for the specified user when enabled in plugin settings.
+    /// Ensures a private Magic Playlist tagged with <c>__is_content_hider_playlist</c> exists for the specified user.
     /// </summary>
     /// <param name="userId">The Jellyfin user identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The Magic Playlist GUID, or <c>null</c> if disabled or user not found.</returns>
+    /// <returns>The Magic Playlist GUID, or <c>null</c> if user not found.</returns>
     Task<Guid?> EnsureUserMagicPlaylistAsync(Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>

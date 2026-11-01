@@ -1,17 +1,20 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.ContentHider.Helpers;
 using Jellyfin.Plugin.ContentHider.Services;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
+using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -19,38 +22,42 @@ using Microsoft.AspNetCore.Mvc.Filters;
 namespace Jellyfin.Plugin.ContentHider.Filters;
 
 /// <summary>
-/// Intercepts native client actions on a user's <c>[Hide Content]</c> Magic Playlist so TV remotes
-/// and mobile apps can add blocks, view/remove blocked items, and Favorite-toggle blocking on/off.
+/// Intercepts native client actions on a user's Magic Playlist (tagged with <c>__is_content_hider_playlist</c>)
+/// so Web, Mobile, and TV apps can add show/movie blocks, view/remove blocked items, and Favorite-toggle blocking on/off.
 /// </summary>
 public sealed class MagicPlaylistActionFilter : IAsyncActionFilter
 {
+    /// <summary>
+    /// Message returned and displayed to the user when attempting to hide a single episode or unsupported item type.
+    /// </summary>
+    public const string OnlyShowsAndMoviesMessage = "Only shows and movies can be hidden.";
+
     private readonly IContentBlockService _blockService;
-    private readonly ILibraryManager _libraryManager;
     private readonly IUserManager _userManager;
     private readonly IDtoService _dtoService;
+    private readonly ISessionManager? _sessionManager;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MagicPlaylistActionFilter"/> class.
     /// </summary>
     /// <param name="blockService">The content block service.</param>
-    /// <param name="libraryManager">The Jellyfin library manager.</param>
     /// <param name="userManager">The Jellyfin user manager.</param>
     /// <param name="dtoService">The Jellyfin DTO service.</param>
+    /// <param name="sessionManager">Optional Jellyfin session manager for sending user notifications.</param>
     public MagicPlaylistActionFilter(
         IContentBlockService blockService,
-        ILibraryManager libraryManager,
         IUserManager userManager,
-        IDtoService dtoService)
+        IDtoService dtoService,
+        ISessionManager? sessionManager = null)
     {
         ArgumentNullException.ThrowIfNull(blockService);
-        ArgumentNullException.ThrowIfNull(libraryManager);
         ArgumentNullException.ThrowIfNull(userManager);
         ArgumentNullException.ThrowIfNull(dtoService);
 
         _blockService = blockService;
-        _libraryManager = libraryManager;
         _userManager = userManager;
         _dtoService = dtoService;
+        _sessionManager = sessionManager;
     }
 
     /// <inheritdoc />
@@ -83,7 +90,7 @@ public sealed class MagicPlaylistActionFilter : IAsyncActionFilter
         {
             if (HttpMethods.IsPost(request.Method))
             {
-                HandleAddItemsToMagicPlaylist(userId, context);
+                await HandleAddItemsToMagicPlaylistAsync(userId, context).ConfigureAwait(false);
                 return;
             }
 
@@ -95,7 +102,7 @@ public sealed class MagicPlaylistActionFilter : IAsyncActionFilter
 
             if (HttpMethods.IsDelete(request.Method))
             {
-                HandleRemoveItemsFromMagicPlaylist(userId, context);
+                await HandleRemoveItemsFromMagicPlaylistAsync(userId, context).ConfigureAwait(false);
                 return;
             }
         }
@@ -118,12 +125,12 @@ public sealed class MagicPlaylistActionFilter : IAsyncActionFilter
 
             if (HttpMethods.IsPost(request.Method))
             {
-                // Favoriting [Hide Content] pauses blocking (using DefaultPauseDurationMinutes).
+                // Favoriting the Magic Playlist pauses blocking (using DefaultPauseDurationMinutes).
                 _blockService.SetBlockingEnabled(userId, false);
             }
             else if (HttpMethods.IsDelete(request.Method))
             {
-                // Unfavoriting [Hide Content] immediately re-enables blocking.
+                // Unfavoriting the Magic Playlist immediately re-enables blocking.
                 _blockService.SetBlockingEnabled(userId, true);
             }
 
@@ -133,34 +140,84 @@ public sealed class MagicPlaylistActionFilter : IAsyncActionFilter
         await next().ConfigureAwait(false);
     }
 
-    private void HandleAddItemsToMagicPlaylist(Guid userId, ActionExecutingContext context)
+    private async Task HandleAddItemsToMagicPlaylistAsync(Guid userId, ActionExecutingContext context)
     {
         var ids = ExtractGuidList(context, "ids");
+        var anyAdded = false;
+        var anyRejected = false;
+
         foreach (var id in ids)
         {
-            if (id != Guid.Empty)
+            if (id == Guid.Empty)
             {
-                _blockService.AddBlock(userId, id);
+                continue;
+            }
+
+            var added = await _blockService
+                .TryAddBlockAsync(userId, id, context.HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+            if (added)
+            {
+                anyAdded = true;
+            }
+            else
+            {
+                anyRejected = true;
+            }
+        }
+
+        if (anyRejected)
+        {
+            await TryNotifyUserAsync(userId, OnlyShowsAndMoviesMessage, context.HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+
+            if (!anyAdded)
+            {
+                context.Result = new BadRequestObjectResult(OnlyShowsAndMoviesMessage);
+                return;
             }
         }
 
         context.Result = new NoContentResult();
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Best-effort session toast notification should not fail the HTTP response.")]
+    private async Task TryNotifyUserAsync(Guid userId, string text, CancellationToken cancellationToken)
+    {
+        if (_sessionManager?.Sessions is null)
+        {
+            return;
+        }
+
+        var message = new MessageCommand
+        {
+            Header = "Content Hider",
+            Text = text,
+            TimeoutMs = 5000
+        };
+
+        foreach (var session in _sessionManager.Sessions)
+        {
+            if (session is not null && session.UserId == userId && !string.IsNullOrEmpty(session.Id))
+            {
+                try
+                {
+                    await _sessionManager
+                        .SendMessageCommand(session.Id, session.Id, message, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // Ignore disconnected client session errors.
+                }
+            }
+        }
+    }
+
     private void HandleGetMagicPlaylistItems(Guid userId, ActionExecutingContext context)
     {
         var user = _userManager.GetUserById(userId);
-        var records = _blockService.GetUserBlocks(userId);
-
-        var items = new List<BaseItem>(records.Count);
-        foreach (var record in records)
-        {
-            var item = _libraryManager.GetItemById(record.MediaId);
-            if (item is not null)
-            {
-                items.Add(item);
-            }
-        }
+        var items = _blockService.GetBlockedItems(userId);
 
         var totalCount = items.Count;
         int? startIndex = context.ActionArguments.TryGetValue("startIndex", out var sVal) && sVal is int sInt ? sInt : null;
@@ -207,7 +264,7 @@ public sealed class MagicPlaylistActionFilter : IAsyncActionFilter
         context.Result = new OkObjectResult(new QueryResult<BaseItemDto>(startIndex, totalCount, dtos));
     }
 
-    private void HandleRemoveItemsFromMagicPlaylist(Guid userId, ActionExecutingContext context)
+    private async Task HandleRemoveItemsFromMagicPlaylistAsync(Guid userId, ActionExecutingContext context)
     {
         var idsToRemove = new HashSet<Guid>();
         foreach (var id in ExtractGuidList(context, "entryIds"))
@@ -224,7 +281,9 @@ public sealed class MagicPlaylistActionFilter : IAsyncActionFilter
         {
             if (mediaId != Guid.Empty)
             {
-                _blockService.RemoveBlock(userId, mediaId);
+                _ = await _blockService
+                    .RemoveBlockAsync(userId, mediaId, context.HttpContext.RequestAborted)
+                    .ConfigureAwait(false);
             }
         }
 

@@ -1,16 +1,17 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.ContentHider.Configuration;
-using Jellyfin.Plugin.ContentHider.Data;
 using Jellyfin.Plugin.ContentHider.Filters;
 using Jellyfin.Plugin.ContentHider.Helpers;
 using Jellyfin.Plugin.ContentHider.Services;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Search;
@@ -24,36 +25,31 @@ using Xunit;
 
 namespace Jellyfin.Plugin.ContentHider.Tests;
 
-public sealed class ContentHiderActionFilterTests : IDisposable
+public sealed class ContentHiderActionFilterTests
 {
-    private readonly string _tempDir;
-    private readonly string _storagePath;
-    private readonly JsonContentBlockRepository _repository;
+    private readonly Mock<IPlaylistManager> _playlistManagerMock;
     private readonly Mock<ILibraryManager> _libraryManagerMock;
+    private readonly Mock<IUserManager> _userManagerMock;
+    private readonly Mock<IUserDataManager> _userDataManagerMock;
     private readonly ContentBlockService _blockService;
     private readonly ContentHiderActionFilter _filter;
 
     public ContentHiderActionFilterTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), "ContentHiderFilterTests_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        _storagePath = Path.Combine(_tempDir, "users");
-        _repository = new JsonContentBlockRepository(_storagePath);
+        _playlistManagerMock = new Mock<IPlaylistManager>();
         _libraryManagerMock = new Mock<ILibraryManager>();
+        _userManagerMock = new Mock<IUserManager>();
+        _userDataManagerMock = new Mock<IUserDataManager>();
+
         _blockService = new ContentBlockService(
-            _repository,
+            _playlistManagerMock.Object,
             _libraryManagerMock.Object,
+            _userManagerMock.Object,
+            _userDataManagerMock.Object,
             () => new PluginConfiguration(),
             () => DateTime.UtcNow);
-        _filter = new ContentHiderActionFilter(_blockService);
-    }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_tempDir))
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
+        _filter = new ContentHiderActionFilter(_blockService);
     }
 
     [Fact]
@@ -61,13 +57,29 @@ public sealed class ContentHiderActionFilterTests : IDisposable
     {
         var userA = Guid.NewGuid();
         var userB = Guid.NewGuid();
+        var playlistAId = Guid.NewGuid();
         var blockedMovieId = Guid.NewGuid();
         var visibleMovieId = Guid.NewGuid();
         var blockedSeriesId = Guid.NewGuid();
         var childEpisodeId = Guid.NewGuid();
 
-        _blockService.AddBlock(userA, blockedMovieId, exactItemOnly: true);
-        _blockService.AddBlock(userA, blockedSeriesId, exactItemOnly: true);
+        var playlistA = new Playlist
+        {
+            Id = playlistAId,
+            OwnerUserId = userA,
+            Name = "[userA: Hide Content]",
+            Tags = [MagicPlaylistService.ManagedPlaylistTag]
+        };
+
+        _playlistManagerMock.Setup(p => p.GetPlaylists(userA)).Returns([playlistA]);
+        _playlistManagerMock.Setup(p => p.GetPlaylistForUser(playlistAId, userA)).Returns(playlistA);
+        _playlistManagerMock.Setup(p => p.GetPlaylists(userB)).Returns([]);
+
+        _libraryManagerMock.Setup(m => m.GetItemById(blockedMovieId)).Returns(new Movie { Id = blockedMovieId, Name = "Blocked Movie" });
+        _libraryManagerMock.Setup(m => m.GetItemById(blockedSeriesId)).Returns(new Series { Id = blockedSeriesId, Name = "Blocked Series" });
+
+        await _blockService.TryAddBlockAsync(userA, blockedMovieId);
+        await _blockService.TryAddBlockAsync(userA, blockedSeriesId);
 
         var args = new Dictionary<string, object?>
         {
@@ -114,9 +126,23 @@ public sealed class ContentHiderActionFilterTests : IDisposable
     public async Task OnActionExecutionAsync_FiltersLatestMedia_Recommendations_AndSearchHints()
     {
         var userId = Guid.NewGuid();
+        var playlistId = Guid.NewGuid();
         var blockedId = Guid.NewGuid();
         var visibleId = Guid.NewGuid();
-        _blockService.AddBlock(userId, blockedId, exactItemOnly: true);
+
+        var playlist = new Playlist
+        {
+            Id = playlistId,
+            OwnerUserId = userId,
+            Name = "[doug: Hide Content]",
+            Tags = [MagicPlaylistService.ManagedPlaylistTag]
+        };
+
+        _playlistManagerMock.Setup(p => p.GetPlaylists(userId)).Returns([playlist]);
+        _playlistManagerMock.Setup(p => p.GetPlaylistForUser(playlistId, userId)).Returns(playlist);
+        _libraryManagerMock.Setup(m => m.GetItemById(blockedId)).Returns(new Movie { Id = blockedId, Name = "Blocked" });
+
+        await _blockService.TryAddBlockAsync(userId, blockedId);
 
         // 1. IEnumerable<BaseItemDto> (GetLatestMedia)
         IEnumerable<BaseItemDto> latest =

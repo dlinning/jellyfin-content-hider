@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ContentHider.Configuration;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Entities;
@@ -13,10 +14,16 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.ContentHider.Services;
 
 /// <summary>
-/// Provisions per-user <c>[Hide Content]</c> playlists and keeps their Favorite state synchronized with blocking status.
+/// Provisions per-user <c>[{username}: Hide Content]</c> playlists tagged with <c>__is_content_hider_playlist</c>
+/// and keeps their Favorite state synchronized with blocking status.
 /// </summary>
 public sealed partial class MagicPlaylistService : IMagicPlaylistService
 {
+    /// <summary>
+    /// The tag added to every Magic Playlist managed by Content Hider.
+    /// </summary>
+    public const string ManagedPlaylistTag = "__is_content_hider_playlist";
+
     private readonly IContentBlockService _blockService;
     private readonly IPlaylistManager _playlistManager;
     private readonly IUserManager _userManager;
@@ -88,11 +95,36 @@ public sealed partial class MagicPlaylistService : IMagicPlaylistService
         _configProvider = configProvider;
     }
 
+    /// <summary>
+    /// Determines whether the specified item carries the <see cref="ManagedPlaylistTag"/> tag.
+    /// </summary>
+    /// <param name="item">The item to inspect.</param>
+    /// <returns><c>true</c> if tagged with <see cref="ManagedPlaylistTag"/>; otherwise, <c>false</c>.</returns>
+    public static bool HasManagedPlaylistTag(BaseItem? item)
+    {
+        return item?.Tags is { Length: > 0 } tags &&
+               tags.Contains(ManagedPlaylistTag, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Formats the default playlist name for a user using the configured template.
+    /// </summary>
+    /// <param name="template">The configured name template.</param>
+    /// <param name="username">The user's username.</param>
+    /// <returns>The resolved playlist display name.</returns>
+    public static string FormatPlaylistName(string? template, string username)
+    {
+        var effectiveTemplate = string.IsNullOrWhiteSpace(template)
+            ? "[{username}: Hide Content]"
+            : template.Trim();
+
+        return effectiveTemplate.Replace("{username}", username, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <inheritdoc />
     public async Task<Guid?> EnsureUserMagicPlaylistAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var config = _configProvider();
-        if (!config.EnableMagicPlaylist || userId == Guid.Empty)
+        if (userId == Guid.Empty)
         {
             return null;
         }
@@ -103,34 +135,32 @@ public sealed partial class MagicPlaylistService : IMagicPlaylistService
             return null;
         }
 
-        var desiredName = string.IsNullOrWhiteSpace(config.MagicPlaylistName)
-            ? "[Hide Content]"
-            : config.MagicPlaylistName.Trim();
-
         var existingId = _blockService.GetMagicPlaylistId(userId);
         if (existingId.HasValue && existingId.Value != Guid.Empty)
         {
-            var existingPlaylist = _playlistManager.GetPlaylistForUser(existingId.Value, userId);
-            if (existingPlaylist is not null)
+            var existingPlaylist = _playlistManager.GetPlaylistForUser(existingId.Value, userId)
+                                   ?? _libraryManager.GetItemById(existingId.Value) as Playlist;
+            if (existingPlaylist is not null && HasManagedPlaylistTag(existingPlaylist))
             {
                 SyncFavoriteIndicator(userId);
                 return existingId.Value;
             }
         }
 
-        // Check if the user already has a playlist matching the configured MagicPlaylistName.
-        var matchByName = _playlistManager
+        // Check if the user already has a playlist tagged with __is_content_hider_playlist.
+        var matchByTag = _playlistManager
             .GetPlaylists(userId)
-            .FirstOrDefault(p =>
-                p.OwnerUserId == userId &&
-                string.Equals(p.Name, desiredName, StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(p => p.OwnerUserId == userId && HasManagedPlaylistTag(p));
 
-        if (matchByName is not null)
+        if (matchByTag is not null)
         {
-            _blockService.SetMagicPlaylistId(userId, matchByName.Id);
+            _blockService.SetMagicPlaylistId(userId, matchByTag.Id);
             SyncFavoriteIndicator(userId);
-            return matchByName.Id;
+            return matchByTag.Id;
         }
+
+        var config = _configProvider();
+        var desiredName = FormatPlaylistName(config.MagicPlaylistName, user.Username);
 
         var creationResult = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
         {
@@ -142,6 +172,13 @@ public sealed partial class MagicPlaylistService : IMagicPlaylistService
 
         if (creationResult is not null && Guid.TryParse(creationResult.Id, out var createdPlaylistId) && createdPlaylistId != Guid.Empty)
         {
+            var createdPlaylist = _playlistManager.GetPlaylistForUser(createdPlaylistId, userId)
+                                  ?? _libraryManager.GetItemById(createdPlaylistId) as Playlist;
+            if (createdPlaylist is not null)
+            {
+                await EnsurePlaylistTagAsync(createdPlaylist, cancellationToken).ConfigureAwait(false);
+            }
+
             _blockService.SetMagicPlaylistId(userId, createdPlaylistId);
             SyncFavoriteIndicator(userId);
             LogProvisionedMagicPlaylist(_logger, desiredName, createdPlaylistId, userId);
@@ -155,11 +192,6 @@ public sealed partial class MagicPlaylistService : IMagicPlaylistService
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "One user's playlist provisioning failure should not abort provisioning for remaining users.")]
     public async Task EnsureAllUsersMagicPlaylistsAsync(CancellationToken cancellationToken = default)
     {
-        if (!_configProvider().EnableMagicPlaylist)
-        {
-            return;
-        }
-
         foreach (var user in _userManager.GetUsers())
         {
             if (cancellationToken.IsCancellationRequested)
@@ -188,7 +220,8 @@ public sealed partial class MagicPlaylistService : IMagicPlaylistService
         }
 
         var user = _userManager.GetUserById(userId);
-        var playlistItem = _libraryManager.GetItemById(playlistId.Value);
+        var playlistItem = _libraryManager.GetItemById(playlistId.Value)
+                           ?? _playlistManager.GetPlaylistForUser(playlistId.Value, userId);
         if (user is null || playlistItem is null)
         {
             return;
@@ -201,6 +234,19 @@ public sealed partial class MagicPlaylistService : IMagicPlaylistService
             userData.IsFavorite = shouldBeFavorite;
             _userDataManager.SaveUserData(user, playlistItem, userData, UserDataSaveReason.UpdateUserRating, CancellationToken.None);
         }
+    }
+
+    private async Task EnsurePlaylistTagAsync(Playlist playlist, CancellationToken cancellationToken)
+    {
+        if (HasManagedPlaylistTag(playlist))
+        {
+            return;
+        }
+
+        var existingTags = playlist.Tags ?? [];
+        playlist.Tags = [.. existingTags, ManagedPlaylistTag];
+        _playlistManager.SavePlaylistFile(playlist);
+        await _libraryManager.UpdateItemAsync(playlist, playlist.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
     }
 
     [LoggerMessage(

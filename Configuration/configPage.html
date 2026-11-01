@@ -12,56 +12,20 @@
                     <div class="sectionTitleContainer flex align-items-center">
                         <h2 class="sectionTitle">Content Hider Settings</h2>
                     </div>
-                    <p>Per-user movie, show, and collection hiding across Web, Mobile, and TV clients.</p>
-                    <p>
-                        <a is="emby-linkbutton" class="raised button-alt emby-button" href="../ContentHider" target="_blank" rel="noopener">
-                            <span>Open Self-Service User Portal (/ContentHider)</span>
-                        </a>
-                    </p>
-                </div>
-
-                <div class="verticalSection" style="background: rgba(255,255,255,0.04); padding: 1em; border-radius: 6px; margin-bottom: 1.5em;">
-                    <h3 style="margin-top: 0;">Storage Status</h3>
-                    <div><strong>On-Disk Path:</strong> <code id="chDbPath">Loading...</code></div>
-                    <div style="margin-top: 0.4em;"><strong>Status:</strong> <span id="chDbStatus">Loading...</span></div>
-                    <div style="margin-top: 0.4em;"><strong>Total Persisted Blocks (All Users):</strong> <span id="chTotalBlocks">-</span></div>
+                    <p>Per-user movie, show, and collection hiding across Web, Mobile, and TV clients using each user's private Magic Playlist (tagged with <code>__is_content_hider_playlist</code>).</p>
                 </div>
 
                 <form id="ContentHiderConfigForm">
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="EnableWebUiInjection" name="EnableWebUiInjection" type="checkbox" is="emby-checkbox" />
-                            <span>Enable Jellyfin Web UI buttons (Header Quick-Toggle &amp; Item Detail Hide button)</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">Injects the lightweight Content Hider script into /web/index.html in memory without modifying files on disk.</div>
-                    </div>
-
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="EnableMagicPlaylist" name="EnableMagicPlaylist" type="checkbox" is="emby-checkbox" />
-                            <span>Enable Per-User Magic Playlist for TV &amp; Mobile Apps</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">Creates a private playlist per user so TV and mobile clients can hide items via "Add to Playlist", unhide via "Remove from Playlist", and pause/resume blocking via Favorite (❤️).</div>
-                    </div>
-
                     <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="MagicPlaylistName">Magic Playlist Name</label>
+                        <label class="inputLabel inputLabelUnfocused" for="MagicPlaylistName">Default Magic Playlist Name</label>
                         <input id="MagicPlaylistName" name="MagicPlaylistName" type="text" is="emby-input" required />
-                        <div class="fieldDescription">Name of each user's private playlist (default: <code>[Hide Content]</code>).</div>
+                        <div class="fieldDescription">Default name when creating a user's private playlist (default: <code>[{username}: Hide Content]</code>). Playlists are tracked via the <code>__is_content_hider_playlist</code> tag, so users can rename their playlist freely.</div>
                     </div>
 
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="DefaultPauseDurationMinutes">Default Pause Blocking Duration (Minutes)</label>
                         <input id="DefaultPauseDurationMinutes" name="DefaultPauseDurationMinutes" type="number" is="emby-input" min="0" max="10080" required />
-                        <div class="fieldDescription">Automatically re-enable blocking after this many minutes when a user pauses blocking (set to <code>0</code> for manual re-enable only).</div>
-                    </div>
-
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="NormalizeEpisodesToSeries" name="NormalizeEpisodesToSeries" type="checkbox" is="emby-checkbox" />
-                            <span>Hiding an Episode or Season hides its parent TV Series by default</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">Allows users on TV/mobile clients to hide an entire show directly from an episode in "Next Up" or "Continue Watching".</div>
+                        <div class="fieldDescription">Automatically re-enable blocking after this many minutes when a user Favorites (❤️) their Magic Playlist to pause blocking (set to <code>0</code> for manual re-enable only).</div>
                     </div>
 
                     <div class="checkboxContainer checkboxContainer-withDescription">
@@ -69,12 +33,6 @@
                             <input id="HideEmptyCollections" name="HideEmptyCollections" type="checkbox" is="emby-checkbox" />
                             <span>Automatically hide Collections (BoxSets) when all items inside are hidden for that user</span>
                         </label>
-                    </div>
-
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="CustomDatabasePath">Custom Storage Directory Path (Optional)</label>
-                        <input id="CustomDatabasePath" name="CustomDatabasePath" type="text" is="emby-input" />
-                        <div class="fieldDescription">Leave blank to use the default isolated plugin path (<code>&lt;PluginDataFolder&gt;/users</code>).</div>
                     </div>
 
                     <div>
@@ -90,31 +48,13 @@
                 pluginUniqueId: '3867d4a9-959b-476d-b1a6-a912a4741924'
             };
 
-            function loadAdminDbInfo() {
-                var url = ApiClient.getUrl('ContentHider/Api/AdminInfo');
-                ApiClient.ajax({ type: 'GET', url: url, dataType: 'json' }).then(function (info) {
-                    document.querySelector('#chDbPath').textContent = info.DatabaseFilePath || '';
-                    document.querySelector('#chDbStatus').textContent = info.DatabaseFileExists
-                        ? 'Persisted on disk (' + info.DatabaseFileSizeBytes + ' bytes)'
-                        : 'Pending initialization';
-                    document.querySelector('#chTotalBlocks').textContent = String(info.TotalBlocksCount ?? 0);
-                }).catch(function () {
-                    document.querySelector('#chDbStatus').textContent = 'Unavailable';
-                });
-            }
-
             document.querySelector('#ContentHiderConfigPage')
                 .addEventListener('pageshow', function () {
                     Dashboard.showLoadingMsg();
-                    loadAdminDbInfo();
                     ApiClient.getPluginConfiguration(ContentHiderConfig.pluginUniqueId).then(function (config) {
-                        document.querySelector('#EnableWebUiInjection').checked = config.EnableWebUiInjection !== false;
-                        document.querySelector('#EnableMagicPlaylist').checked = config.EnableMagicPlaylist !== false;
-                        document.querySelector('#MagicPlaylistName').value = config.MagicPlaylistName || '[Hide Content]';
+                        document.querySelector('#MagicPlaylistName').value = config.MagicPlaylistName || '[{username}: Hide Content]';
                         document.querySelector('#DefaultPauseDurationMinutes').value = config.DefaultPauseDurationMinutes ?? 60;
-                        document.querySelector('#NormalizeEpisodesToSeries').checked = config.NormalizeEpisodesToSeries !== false;
                         document.querySelector('#HideEmptyCollections').checked = config.HideEmptyCollections !== false;
-                        document.querySelector('#CustomDatabasePath').value = config.CustomDatabasePath || '';
                         Dashboard.hideLoadingMsg();
                     });
                 });
@@ -124,16 +64,11 @@
                     e.preventDefault();
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(ContentHiderConfig.pluginUniqueId).then(function (config) {
-                        config.EnableWebUiInjection = document.querySelector('#EnableWebUiInjection').checked;
-                        config.EnableMagicPlaylist = document.querySelector('#EnableMagicPlaylist').checked;
-                        config.MagicPlaylistName = document.querySelector('#MagicPlaylistName').value.trim() || '[Hide Content]';
+                        config.MagicPlaylistName = document.querySelector('#MagicPlaylistName').value.trim() || '[{username}: Hide Content]';
                         config.DefaultPauseDurationMinutes = parseInt(document.querySelector('#DefaultPauseDurationMinutes').value, 10) || 0;
-                        config.NormalizeEpisodesToSeries = document.querySelector('#NormalizeEpisodesToSeries').checked;
                         config.HideEmptyCollections = document.querySelector('#HideEmptyCollections').checked;
-                        config.CustomDatabasePath = document.querySelector('#CustomDatabasePath').value.trim();
                         ApiClient.updatePluginConfiguration(ContentHiderConfig.pluginUniqueId, config).then(function (result) {
                             Dashboard.processPluginConfigurationUpdateResult(result);
-                            loadAdminDbInfo();
                         });
                     });
                     return false;

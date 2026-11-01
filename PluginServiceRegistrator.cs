@@ -1,19 +1,16 @@
 using Jellyfin.Data.Events.Users;
-using Jellyfin.Plugin.ContentHider.Data;
 using Jellyfin.Plugin.ContentHider.Filters;
-using Jellyfin.Plugin.ContentHider.Middleware;
 using Jellyfin.Plugin.ContentHider.Services;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Plugins;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jellyfin.Plugin.ContentHider;
 
 /// <summary>
-/// Registers Content Hider services, JSON persistence, MVC action filters, middleware, and event consumers
+/// Registers Content Hider services, MVC action filters, and user lifecycle event consumers
 /// with Jellyfin's dependency injection container at server startup.
 /// </summary>
 public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
@@ -21,7 +18,6 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
     /// <inheritdoc />
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        serviceCollection.AddSingleton<IContentBlockRepository, JsonContentBlockRepository>();
         serviceCollection.AddSingleton<IContentBlockService, ContentBlockService>();
         serviceCollection.AddSingleton<IMagicPlaylistService, MagicPlaylistService>();
 
@@ -29,7 +25,6 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddScoped<IEventConsumer<UserDeletedEventArgs>, UserLifecycleEventConsumer>();
 
         serviceCollection.AddHostedService<MagicPlaylistHostedService>();
-        serviceCollection.AddTransient<IStartupFilter, WebInjectionStartupFilter>();
 
         serviceCollection.AddSingleton<MagicPlaylistActionFilter>();
         serviceCollection.AddSingleton<ContentHiderActionFilter>();

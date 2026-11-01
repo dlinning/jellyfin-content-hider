@@ -36,13 +36,6 @@ public sealed class ContentHiderActionFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(next);
 
-        var path = context.HttpContext.Request.Path.Value ?? string.Empty;
-        if (path.Contains("/ContentHider", StringComparison.OrdinalIgnoreCase))
-        {
-            await next().ConfigureAwait(false);
-            return;
-        }
-
         var userId = RequestUserHelper.ResolveUserId(context.HttpContext, context.ActionArguments);
         if (userId == Guid.Empty || !_blockService.IsBlockingActive(userId))
         {

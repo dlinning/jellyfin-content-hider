@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
-using System.IO;
 using Jellyfin.Plugin.ContentHider.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
@@ -38,23 +37,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     /// Gets the current plugin instance.
     /// </summary>
     public static Plugin? Instance { get; private set; }
-
-    /// <summary>
-    /// Gets the resolved on-disk file path for the isolated storage directory.
-    /// </summary>
-    public string DatabaseFilePath
-    {
-        get
-        {
-            var custom = Configuration.CustomDatabasePath;
-            if (!string.IsNullOrWhiteSpace(custom))
-            {
-                return custom.Trim();
-            }
-
-            return Path.Combine(DataFolderPath, "users");
-        }
-    }
 
     /// <inheritdoc />
     public IEnumerable<PluginPageInfo> GetPages()

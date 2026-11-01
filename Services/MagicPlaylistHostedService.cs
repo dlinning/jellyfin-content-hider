@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.ContentHider.Services;
 
 /// <summary>
-/// Background hosted service that initializes on-disk storage, provisions per-user Magic Playlists,
+/// Background hosted service that provisions per-user Magic Playlists at startup
 /// and periodically checks for expired pause timers to restore blocking and clear Favorite indicators.
 /// </summary>
 public sealed partial class MagicPlaylistHostedService : IHostedService, IDisposable
@@ -44,7 +44,6 @@ public sealed partial class MagicPlaylistHostedService : IHostedService, IDispos
     {
         try
         {
-            _blockService.ReloadFromDisk();
             await _magicPlaylistService.EnsureAllUsersMagicPlaylistsAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
