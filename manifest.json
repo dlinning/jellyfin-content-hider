@@ -9,11 +9,11 @@
     "versions": [
       {
         "version": "0.1.1.0",
-        "changelog": "Fix HTTP 401 issues",
+        "changelog": "Release v0.1.1 of Jellyfin Content Hider.",
         "targetAbi": "12.0.0.0",
         "sourceUrl": "https://github.com/dlinning/jellyfin-content-hider/releases/download/v0.1.1/ContentHider_0.1.1.0.zip",
-        "checksum": "b5f7c8e2a5e47e562e1c2cabea823b6f",
-        "timestamp": "2026-11-01 05:32:21"
+        "checksum": "acae11677eebc9fceb6b3f0b26ff106d",
+        "timestamp": "2026-11-01 05:32:46"
       },
       {
         "version": "0.1.0.0",
