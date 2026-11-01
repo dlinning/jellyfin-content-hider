@@ -4,8 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 VERSION=""
+CHANGELOG=""
 
-# Parse arguments: require singular -v or --version flag
+# Parse arguments: require singular -v or --version flag, optional -m/--changelog flag
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -v|--version)
@@ -14,7 +15,7 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       if [[ -z "${2:-}" || "${2:-}" == -* ]]; then
-        echo "Error: Missing value for $1 flag. Usage: $0 --version <version>" >&2
+        echo "Error: Missing value for $1 flag. Usage: $0 --version <version> [--changelog <message>]" >&2
         exit 1
       fi
       VERSION="$2"
@@ -27,7 +28,7 @@ while [[ $# -gt 0 ]]; do
       fi
       VERSION="${1#*=}"
       if [[ -z "$VERSION" ]]; then
-        echo "Error: Missing value for --version flag. Usage: $0 --version <version>" >&2
+        echo "Error: Missing value for --version flag. Usage: $0 --version <version> [--changelog <message>]" >&2
         exit 1
       fi
       shift 1
@@ -39,30 +40,50 @@ while [[ $# -gt 0 ]]; do
       fi
       VERSION="${1#*=}"
       if [[ -z "$VERSION" ]]; then
-        echo "Error: Missing value for -v flag. Usage: $0 -v <version>" >&2
+        echo "Error: Missing value for -v flag. Usage: $0 -v <version> [--changelog <message>]" >&2
         exit 1
       fi
       shift 1
       ;;
+    -m|--message|-c|--changelog)
+      if [[ -z "${2:-}" || "${2:-}" == -* ]]; then
+        echo "Error: Missing value for $1 flag. Usage: $0 --version <version> [--changelog <message>]" >&2
+        exit 1
+      fi
+      CHANGELOG="$2"
+      shift 2
+      ;;
+    --message=*|--changelog=*)
+      CHANGELOG="${1#*=}"
+      shift 1
+      ;;
+    -m=*)
+      CHANGELOG="${1#*=}"
+      shift 1
+      ;;
     -h|--help)
-      echo "Usage: $0 --version <version> (or -v <version>)"
+      echo "Usage: $0 --version <version> [--changelog <message>]"
       exit 0
       ;;
     *)
-      echo "Error: Unexpected argument '$1'. Usage: $0 --version <version> (or -v <version>)" >&2
+      echo "Error: Unexpected argument '$1'. Usage: $0 --version <version> [--changelog <message>]" >&2
       exit 1
       ;;
   esac
 done
 
 if [[ -z "$VERSION" ]]; then
-  echo "Error: --version (or -v) flag is required with no fallback. Usage: $0 --version <version>" >&2
+  echo "Error: --version (or -v) flag is required with no fallback. Usage: $0 --version <version> [--changelog <message>]" >&2
   exit 1
 fi
 
 # Clean and normalize version formatting
 CLEAN_VERSION="${VERSION#v}"
 TAG_NAME="v${CLEAN_VERSION}"
+
+if [[ -z "$CHANGELOG" ]]; then
+  CHANGELOG="Release ${TAG_NAME} of Jellyfin Content Hider."
+fi
 
 # Ensure 4-part version for Jellyfin (e.g. 0.0.2 -> 0.0.2.0)
 FOUR_PART_VERSION="$CLEAN_VERSION"
@@ -96,7 +117,7 @@ TIMESTAMP_SPACE="$(date -u +"%Y-%m-%d %H:%M:%S")"
 cat > "$DIST_DIR/meta.json" <<EOF
 {
   "category": "General",
-  "changelog": "Release ${TAG_NAME} of Jellyfin Content Hider.",
+  "changelog": "$CHANGELOG",
   "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients ",
   "guid": "$PLUGIN_GUID",
   "name": "Content Hider",
@@ -127,13 +148,14 @@ fi
 RELEASE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${TAG_NAME}/${ZIP_NAME}"
 
 # Update manifest.json by appending/updating this version while preserving older versions
+export MANIFEST_CHANGELOG="$CHANGELOG"
 python3 - <<PYEOF
 import json, os
 
 manifest_file = "$ROOT_DIR/manifest.json"
 new_entry = {
     "version": "$FOUR_PART_VERSION",
-    "changelog": "Release ${TAG_NAME} of Jellyfin Content Hider.",
+    "changelog": os.environ.get("MANIFEST_CHANGELOG", "Release ${TAG_NAME} of Jellyfin Content Hider."),
     "targetAbi": "12.0.0.0",
     "sourceUrl": "$RELEASE_URL",
     "checksum": "$CHECKSUM",
