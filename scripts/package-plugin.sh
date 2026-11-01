@@ -64,7 +64,7 @@ fi
 CLEAN_VERSION="${VERSION#v}"
 TAG_NAME="v${CLEAN_VERSION}"
 
-# Ensure 4-part version for Jellyfin (e.g. 0.0.1 -> 0.0.1.0)
+# Ensure 4-part version for Jellyfin (e.g. 0.0.2 -> 0.0.2.0)
 FOUR_PART_VERSION="$CLEAN_VERSION"
 DOT_COUNT=$(echo "$FOUR_PART_VERSION" | awk -F. '{print NF-1}')
 while [ "$DOT_COUNT" -lt 3 ]; do
@@ -126,28 +126,47 @@ fi
 
 RELEASE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${TAG_NAME}/${ZIP_NAME}"
 
-cat > "$ROOT_DIR/manifest.json" <<EOF
-[
-  {
-    "guid": "$PLUGIN_GUID",
-    "name": "Content Hider",
-    "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients using an isolated on-disk SQLite database.",
-    "overview": "Per-user movie, TV show, and collection hiding across all clients.",
-    "owner": "$REPO_OWNER",
-    "category": "General",
-    "versions": [
-      {
-        "version": "$FOUR_PART_VERSION",
-        "changelog": "Release ${TAG_NAME} of Jellyfin Content Hider.",
-        "targetAbi": "12.0.0.0",
-        "sourceUrl": "$RELEASE_URL",
-        "checksum": "$CHECKSUM",
-        "timestamp": "$TIMESTAMP_SPACE"
-      }
-    ]
-  }
-]
-EOF
+# Update manifest.json by appending/updating this version while preserving older versions
+python3 - <<PYEOF
+import json, os
+
+manifest_file = "$ROOT_DIR/manifest.json"
+new_entry = {
+    "version": "$FOUR_PART_VERSION",
+    "changelog": "Release ${TAG_NAME} of Jellyfin Content Hider.",
+    "targetAbi": "12.0.0.0",
+    "sourceUrl": "$RELEASE_URL",
+    "checksum": "$CHECKSUM",
+    "timestamp": "$TIMESTAMP_SPACE"
+}
+
+data = []
+if os.path.exists(manifest_file):
+    try:
+        with open(manifest_file, "r") as f:
+            data = json.load(f)
+    except Exception:
+        data = []
+
+if not data:
+    data = [{
+        "guid": "$PLUGIN_GUID",
+        "name": "Content Hider",
+        "description": "Allows each user to hide specific shows, movies, and collections across Web, Mobile, and TV clients using an isolated on-disk SQLite database.",
+        "overview": "Per-user movie, TV show, and collection hiding across all clients.",
+        "owner": "$REPO_OWNER",
+        "category": "General",
+        "versions": []
+    }]
+
+versions = [v for v in data[0].get("versions", []) if v.get("version") != "$FOUR_PART_VERSION"]
+versions.insert(0, new_entry)
+data[0]["versions"] = versions
+
+with open(manifest_file, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PYEOF
 
 cp "$ROOT_DIR/manifest.json" "$ROOT_DIR/dist/manifest.json"
 

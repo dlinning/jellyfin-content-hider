@@ -28,17 +28,9 @@ jobs:
         run: |
           RAW_TAG="${GITHUB_REF#refs/tags/}"
           if [[ -z "$RAW_TAG" || "$RAW_TAG" == "$GITHUB_REF" ]]; then
-            RAW_TAG="v0.1.0.0"
+            RAW_TAG="v0.0.2"
           fi
-          VERSION="${RAW_TAG#v}"
-          # Ensure 4-part version for Jellyfin (e.g., 0.1.0 -> 0.1.0.0)
-          DOT_COUNT=$(echo "$VERSION" | awk -F. '{print NF-1}')
-          while [ "$DOT_COUNT" -lt 3 ]; do
-            VERSION="${VERSION}.0"
-            DOT_COUNT=$((DOT_COUNT + 1))
-          done
           echo "RAW_TAG=$RAW_TAG" >> "$GITHUB_OUTPUT"
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and Package Plugin
         run: |
@@ -54,6 +46,14 @@ jobs:
             dist/manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy manifest to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          keep_files: false
 
       - name: Commit updated manifest to main branch
         if: startsWith(github.ref, 'refs/tags/')

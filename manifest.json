@@ -14,6 +14,14 @@
         "sourceUrl": "https://github.com/dlinning/jellyfin-content-hider/releases/download/v0.0.2/ContentHider_0.0.2.0.zip",
         "checksum": "f1d33cd16aeb76c956481dfa5fda3865",
         "timestamp": "2026-11-01 03:07:46"
+      },
+      {
+        "version": "0.1.0.0",
+        "changelog": "Release v0.0.1 of Jellyfin Content Hider.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/dlinning/jellyfin-content-hider/releases/download/v0.0.1/ContentHider_0.1.0.0.zip",
+        "checksum": "43d9bc4c25ebd73681ab2f316a0642fe",
+        "timestamp": "2026-11-01 02:58:33"
       }
     ]
   }
