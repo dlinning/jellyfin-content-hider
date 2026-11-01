@@ -23,27 +23,27 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Extract version from tag
+      - name: Extract version and tag
         id: get_version
         run: |
           RAW_TAG="${GITHUB_REF#refs/tags/}"
-          VERSION="${RAW_TAG#v}"
-          # If not triggered by a tag (workflow_dispatch), fallback to 0.1.0.0
-          if [[ -z "$VERSION" || "$VERSION" == "$GITHUB_REF" ]]; then
-            VERSION="0.1.0.0"
+          if [[ -z "$RAW_TAG" || "$RAW_TAG" == "$GITHUB_REF" ]]; then
+            RAW_TAG="v0.1.0.0"
           fi
+          VERSION="${RAW_TAG#v}"
           # Ensure 4-part version for Jellyfin (e.g., 0.1.0 -> 0.1.0.0)
           DOT_COUNT=$(echo "$VERSION" | awk -F. '{print NF-1}')
           while [ "$DOT_COUNT" -lt 3 ]; do
             VERSION="${VERSION}.0"
             DOT_COUNT=$((DOT_COUNT + 1))
           done
+          echo "RAW_TAG=$RAW_TAG" >> "$GITHUB_OUTPUT"
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and Package Plugin
         run: |
           chmod +x scripts/package-plugin.sh
-          ./scripts/package-plugin.sh
+          ./scripts/package-plugin.sh --version "${{ steps.get_version.outputs.RAW_TAG }}"
 
       - name: Upload Release Asset
         if: startsWith(github.ref, 'refs/tags/')
@@ -54,3 +54,16 @@ jobs:
             dist/manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit updated manifest to main branch
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main || git checkout -b main origin/main
+          cp dist/manifest.json manifest.json
+          if ! git diff --quiet manifest.json; then
+            git add manifest.json
+            git commit -m "chore: update manifest.json for ${{ steps.get_version.outputs.RAW_TAG }} [skip ci]"
+            git push origin main
+          fi
