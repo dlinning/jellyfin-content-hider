@@ -1,1 +1,7 @@
-obj
+bin/
+obj/
+dist/
+*.sqlite
+*.sqlite-*
+.vs/
+.DS_Store
