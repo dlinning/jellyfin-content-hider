@@ -1,1 +1,8 @@
-{}
+{
+    "cSpell.words": [
+        "Jellyfin"
+    ],
+    "editor.formatOnSave": true,
+    "git.fetchOnPull": true,
+    "git.autofetch": true
+}
