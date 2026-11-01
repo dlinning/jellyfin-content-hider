@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using Jellyfin.Plugin.ContentHider.Configuration;
@@ -13,6 +14,7 @@ namespace Jellyfin.Plugin.ContentHider;
 /// <summary>
 /// The main plugin.
 /// </summary>
+[SuppressMessage("Naming", "CA1724:Type names should not match namespaces", Justification = "Standard Jellyfin plugin entry point name.")]
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     /// <summary>

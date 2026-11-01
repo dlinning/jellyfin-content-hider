@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -38,6 +39,7 @@ public sealed partial class MagicPlaylistHostedService : IHostedService, IDispos
     }
 
     /// <inheritdoc />
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Hosted service startup must not crash the Jellyfin server.")]
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         try
@@ -66,6 +68,7 @@ public sealed partial class MagicPlaylistHostedService : IHostedService, IDispos
         _timer?.Dispose();
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background timer callback must not throw unhandled exceptions.")]
     private void OnTimerTick(object? state)
     {
         try

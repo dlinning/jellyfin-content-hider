@@ -421,7 +421,7 @@ public sealed class ContentBlockService : IContentBlockService
             return false;
         }
 
-        var itemId = hint.Id != Guid.Empty ? hint.Id : hint.ItemId;
+        var itemId = hint.Id;
         if (itemId != Guid.Empty && blockedIds.Contains(itemId))
         {
             return true;

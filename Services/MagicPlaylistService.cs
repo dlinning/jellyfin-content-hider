@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -151,6 +152,7 @@ public sealed partial class MagicPlaylistService : IMagicPlaylistService
     }
 
     /// <inheritdoc />
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "One user's playlist provisioning failure should not abort provisioning for remaining users.")]
     public async Task EnsureAllUsersMagicPlaylistsAsync(CancellationToken cancellationToken = default)
     {
         if (!_configProvider().EnableMagicPlaylist)
